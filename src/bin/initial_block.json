@@ -1,0 +1,28 @@
+{
+    "mempool_genesis_tx_in_comment": [
+        "/// The TxIn content for genesis block."
+    ],
+    "treasury_supply": 90090000000000000,
+    "mempool_genesis_tx_in": "Because men work we may speak of an economy, not the other way around. Because men worship we may speak of religion, not the other way around. And when an economy collides with a religion it is living men who collide, nothing else.",
+    "mempool_seed_utxo": {
+        "000000": [
+            {
+                "public_key": "bf686a959447d6277513a9e7a534bab4bc3ee384afe5abbace6c31e2b2cc01ee",
+                "amount": 90090000000000000,
+                "locktime": 0
+            }
+        ]
+    },
+    "user_wallet_seeds": [
+        [
+
+        ]
+    ],
+    "user_test_auto_gen_setup": {
+        "user_initial_transactions": [],
+        "_user_initial_transactions": [
+            []
+        ]
+    },
+    "generated_keys": []
+}

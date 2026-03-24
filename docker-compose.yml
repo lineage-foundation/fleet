@@ -1,0 +1,56 @@
+version: '3'
+services:
+
+  mempool-node: &node-default
+    image: network
+    environment:
+      RUST_LOG: info,debug
+    privileged: false
+    user: "${UID}:${GID}"
+    init: true
+    ports: 
+      - '12300:12300'
+      - '3003:3003'
+    volumes:  
+      - /tmp/mempool:/src
+    command: mempool
+    platform: linux/amd64
+    networks:
+      aiblock:
+        ipv4_address: 172.28.0.3
+  
+  storage-node:
+    <<: *node-default
+    ports:
+      - '12330:12330'
+      - '3001:3001'
+    volumes:
+      - /tmp/storage:/src
+    command: storage
+    networks:
+      aiblock:
+        ipv4_address: 172.28.0.2
+
+  miner-node:
+    <<: *node-default
+    environment:
+      RUST_LOG: trace
+    depends_on: 
+      - mempool-node
+      - storage-node
+    ports:
+      - '12340:12340'
+      - '3004:3004'
+    volumes:  
+      - /tmp/miner:/src
+    command: miner
+    networks:
+      aiblock:
+        ipv4_address: 172.28.0.4
+
+networks:
+  aiblock:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
