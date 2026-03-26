@@ -101,7 +101,7 @@ impl<'glfw, Ctx: fmt::Debug> Drop for GlfwContextGuard<'glfw, Ctx> {
 }
 
 static GLFW_MUTEX: Mutex<()> = Mutex::new(());
-static mut GLFW_INIT_ERR: Option<(glfw::Error, String)> = None;
+static GLFW_INIT_ERR: Mutex<Option<(glfw::Error, String)>> = Mutex::new(None);
 
 impl<Ctx: fmt::Debug> GlfwContext<Ctx> {
     fn new(f: impl FnOnce() -> Result<Ctx, OpenGlMinerError>) -> Result<Self, OpenGlMinerError> {
@@ -118,9 +118,17 @@ impl<Ctx: fmt::Debug> GlfwContext<Ctx> {
         // We'll save the error in a static field and then test it afterward to see if the error
         // callback actually fired. If so, return the descriptive error provided by the callback.
         let mut glfw = {
-            unsafe { GLFW_INIT_ERR = None };
-            let init = glfw::init(|err, msg| unsafe { GLFW_INIT_ERR = Some((err, msg)) });
-            if let Some((err, msg)) = unsafe { GLFW_INIT_ERR.take() } {
+            *GLFW_INIT_ERR.lock().map_err(|_| OpenGlMinerError::LockFailed)? = None;
+            let init = glfw::init(|err, msg| {
+                if let Ok(mut guard) = GLFW_INIT_ERR.lock() {
+                    *guard = Some((err, msg));
+                }
+            });
+            if let Some((err, msg)) = GLFW_INIT_ERR
+                .lock()
+                .map_err(|_| OpenGlMinerError::LockFailed)?
+                .take()
+            {
                 return Err(OpenGlMinerError::InitializeGlfwMsg(err, msg));
             }
             init.map_err(OpenGlMinerError::InitializeGlfw)?
@@ -154,7 +162,7 @@ impl<Ctx: fmt::Debug> GlfwContext<Ctx> {
         })
     }
 
-    fn make_current(&mut self) -> GlfwContextGuard<Ctx> {
+    fn make_current(&mut self) -> GlfwContextGuard<'_, Ctx> {
         let guard = self.mutex.lock().unwrap();
         debug!(
             "Thread {} is acquiring the GLFW context",

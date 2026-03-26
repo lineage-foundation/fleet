@@ -318,7 +318,7 @@ impl MinerStatistics {
     }
 
     /// Gets a handle to update these statistics safely, even in the event of an error.
-    pub fn update_safe(&mut self) -> MinerStatisticsUpdater {
+    pub fn update_safe(&mut self) -> MinerStatisticsUpdater<'_> {
         MinerStatisticsUpdater {
             statistics: self,
             computed_hashes: 0,

@@ -253,7 +253,7 @@ impl SimpleDb {
     }
 
     /// Writter to accumulate batch edits
-    pub fn batch_writer(&self) -> SimpleDbWriteBatch {
+    pub fn batch_writer(&self) -> SimpleDbWriteBatch<'_> {
         match self {
             Self::File { db, .. } => SimpleDbWriteBatch::File {
                 write: Default::default(),

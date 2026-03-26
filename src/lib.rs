@@ -6,6 +6,7 @@
 mod active_raft;
 mod api;
 mod asert;
+mod bounded_hash_set;
 mod block_pipeline;
 pub mod comms_handler;
 pub mod configurations;
