@@ -43,7 +43,6 @@ use tw_chain::primitives::transaction::Transaction;
 use tw_chain::utils::transaction_utils::{
     construct_tx_core, construct_tx_hash, update_input_signatures,
 };
-use warp::filters::trace;
 
 /// Key for last pow coinbase produced
 pub const LAST_COINBASE_KEY: &str = "LastCoinbaseKey";

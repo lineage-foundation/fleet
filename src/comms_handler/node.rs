@@ -84,6 +84,7 @@ use super::tcp_tls::{
     verify_is_valid_for_dns_names, TcpTlsConnector, TcpTlsListner, TcpTlsStream, TlsCertificate,
 };
 use super::{CommsError, Event, Result, TcpTlsConfig};
+use crate::bounded_hash_set::BoundedHashSet;
 use crate::comms_handler::error::PeerInfo;
 use crate::constants::NETWORK_VERSION;
 use crate::interfaces::{node_type_as_str, CommMessage, NodeType, Token};
@@ -118,6 +119,9 @@ const FANOUT: usize = 8;
 
 /// Max. number of gossip message retransmissions.
 const GOSSIP_MAX_TTL: u8 = 4;
+
+/// Max. number of seen gossip message IDs to retain before evicting the oldest.
+const SEEN_GOSSIP_CACHE_SIZE: usize = 50_000;
 
 /// Generic Heartbeat interval in seconds
 const HEART_BEAT_INTERVAL: u64 = 3;
@@ -162,9 +166,8 @@ pub struct Node {
     /// Incoming events from peers.
     event_rx: Arc<Mutex<mpsc::UnboundedReceiver<Event>>>,
     /// Contains message IDs that have been already seen and retransmitted by this node.
-    // TODO: this requires further work - a list of seen gossip messages can grow unbounded,
-    // and it requires to be purged periodically in order to conserve resources.
-    seen_gossip_messages: Arc<RwLock<HashSet<Token>>>,
+    /// Bounded to [`SEEN_GOSSIP_CACHE_SIZE`] entries; oldest entries are evicted first.
+    seen_gossip_messages: Arc<RwLock<BoundedHashSet<Token>>>,
     /// Connect to all unknown contacts in HandshakeResponse
     connect_to_handshake_contacts: bool,
     /// Threadhandle for a HeartBeat Prober
@@ -280,7 +283,7 @@ impl Node {
             span,
             event_tx,
             event_rx: Arc::new(Mutex::new(event_rx)),
-            seen_gossip_messages: Arc::new(RwLock::new(HashSet::new())),
+            seen_gossip_messages: Arc::new(RwLock::new(BoundedHashSet::new(SEEN_GOSSIP_CACHE_SIZE))),
             connect_to_handshake_contacts: false,
             heartbeat_handle: None,
             miner_connection_attempts: Arc::new(RwLock::new(HashMap::new())),
