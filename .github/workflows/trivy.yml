@@ -32,6 +32,8 @@ permissions:
   contents: read
 
 env:
+  # Opt into Node.js 24 for JS actions ahead of GHES runner defaults (checkout, docker helpers, third-party actions).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   IMAGE_TAG: fleet-node:ci
   TRIVY_SEVERITY: CRITICAL,HIGH
 
@@ -41,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run Trivy (FS — vuln, misconfiguration)
         uses: aquasecurity/trivy-action@v0.36.0
@@ -59,12 +61,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build image (linux/amd64)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false

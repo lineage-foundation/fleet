@@ -28,8 +28,8 @@ RUN apt-get update \
 
 RUN cargo install cargo-chef --version 0.1.72
 
-WORKDIR /aiblock
-ENV CARGO_TARGET_DIR=/aiblock
+WORKDIR /lineage
+ENV CARGO_TARGET_DIR=/lineage
 
 FROM chef AS planner
 COPY . .
@@ -37,9 +37,9 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 
-COPY --from=planner /aiblock/recipe.json /aiblock/recipe.json
+COPY --from=planner /lineage/recipe.json /lineage/recipe.json
 
-RUN cargo chef cook --release --recipe-path /aiblock/recipe.json
+RUN cargo chef cook --release --recipe-path /lineage/recipe.json
 
 COPY . .
 RUN cargo build --release --bin node
@@ -72,7 +72,7 @@ RUN set -eu; \
 # distroless/cc-debian12 — immutable digest.
 FROM gcr.io/distroless/cc-debian12@sha256:e2d29aec8061843706b7e484c444f78fafb05bfe47745505252b1769a05d14f1 AS runner
 
-COPY --from=builder /aiblock/release/node /aiblock/aiblock
+COPY --from=builder /lineage/release/node /lineage/lineage
 
 COPY --from=runtime-bookworm-so /dist/usr/lib/ /usr/lib/
 
@@ -98,7 +98,7 @@ USER nonroot:nonroot
 
 WORKDIR /
 
-ENTRYPOINT ["/aiblock/aiblock"]
+ENTRYPOINT ["/lineage/lineage"]
 
 # Exec form — no shell; overrides with `docker run … storage` etc.
 CMD ["mempool"]

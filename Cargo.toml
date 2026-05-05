@@ -4,7 +4,7 @@ version = "1.1.2"
 authors = ["Byron Houwens <byron.houwens@a-block.net>"]
 edition = "2018"
 readme = "README.md"
-description = "Lineage network – node coordination (formerly AIBlock Network)"
+description = "Lineage network node coordination."
 
 [dependencies]
 ahash = "0.8.11"

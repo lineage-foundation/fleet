@@ -382,10 +382,10 @@ async fn nodes_tls_mismatch() {
     //
     let configs =
         get_bound_common_tls_configs(&["mempool1", "mempool2", "mempool3"], |name, mut s| {
-            if name == "mempool1.aiblock.ch" {
+            if name == "mempool1.lineage.foundation" {
                 let mapping = &mut s.socket_name_mapping;
-                let key1 = find_key_with_value(mapping, "mempool2.aiblock.ch").unwrap();
-                let key2 = find_key_with_value(mapping, "mempool3.aiblock.ch").unwrap();
+                let key1 = find_key_with_value(mapping, "mempool2.lineage.foundation").unwrap();
+                let key2 = find_key_with_value(mapping, "mempool3.lineage.foundation").unwrap();
                 swap_map_values(mapping, &key1, &key2);
             }
             s
@@ -444,15 +444,15 @@ async fn nodes_tls_ca_mismatch() {
     let configs =
         get_bound_common_tls_configs(&["mempool1", "mempool2", "miner101"], |name, mut s| {
             match name {
-                "mempool1.aiblock.ch" => {
+                "mempool1.lineage.foundation" => {
                     debug!("Socket Mapping: {:?}", &s.socket_name_mapping);
                     let untrusted_names = s.untrusted_names.as_mut().unwrap();
-                    untrusted_names.insert("ca_root.aiblock.ch".to_owned());
+                    untrusted_names.insert("ca_root.lineage.foundation".to_owned());
                 }
-                "mempool2.aiblock.ch" => {
+                "mempool2.lineage.foundation" => {
                     let untrusted_names = s.untrusted_names.as_mut().unwrap();
-                    untrusted_names.remove("miner101.aiblock.ch");
-                    s.pem_certificates.remove("miner101.aiblock.ch");
+                    untrusted_names.remove("miner101.lineage.foundation");
+                    s.pem_certificates.remove("miner101.lineage.foundation");
                 }
                 _ => (),
             }
@@ -515,9 +515,9 @@ async fn nodes_tls_ca_unmapped_mismatch() {
         let mut configs = Vec::new();
         let tls_spec = get_test_tls_spec();
         for (address, name) in [
-            ("127.0.0.1:12515", "node101.aiblock.ch"),
-            ("127.0.0.1:12520", "miner101.aiblock.ch"),
-            ("127.0.0.1:12530", "miner102.aiblock.ch"),
+            ("127.0.0.1:12515", "node101.lineage.foundation"),
+            ("127.0.0.1:12520", "miner101.lineage.foundation"),
+            ("127.0.0.1:12530", "miner102.lineage.foundation"),
         ]
         .iter()
         {

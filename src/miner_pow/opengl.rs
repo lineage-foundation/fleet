@@ -138,7 +138,7 @@ impl<Ctx: fmt::Debug> GlfwContext<Ctx> {
         glfw.window_hint(WindowHint::OpenGlProfile(OpenGlProfileHint::Core));
         glfw.window_hint(WindowHint::Visible(false));
         let (mut window, events) = glfw
-            .create_window(256, 256, "AIBlock Miner", WindowMode::Windowed)
+            .create_window(256, 256, "Lineage Miner", WindowMode::Windowed)
             .ok_or(OpenGlMinerError::CreateGlfwWindow)?;
 
         gl::load_with(|name| window.get_proc_address(name) as *const _);
@@ -747,7 +747,7 @@ mod gl_wrapper {
                             shader.id,
                             info_log_length.into(),
                             &mut actual_info_log_length,
-                            info_log.as_mut_ptr(),
+                            info_log.as_mut_ptr().cast::<GLchar>(),
                         )
                     };
                     check_error("glGetShaderInfoLog")?;
@@ -854,7 +854,7 @@ mod gl_wrapper {
                             program.id,
                             info_log_length.into(),
                             &mut actual_info_log_length,
-                            info_log.as_mut_ptr(),
+                            info_log.as_mut_ptr().cast::<GLchar>(),
                         )
                     };
                     check_error("glGetProgramInfoLog")?;

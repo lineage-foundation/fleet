@@ -1,4 +1,4 @@
-//! App to run an AIBlock node.
+//! App to run a Lineage node.
 
 use clap::{App, ArgMatches};
 use tracing::info;
@@ -33,8 +33,8 @@ async fn launch_node_with_args(matches: ArgMatches<'_>) {
 }
 
 fn clap_app<'a, 'b>() -> App<'a, 'b> {
-    App::new("AIBlock Node")
-        .about("Runs an AIBlock node.")
+    App::new("Lineage Node")
+        .about("Runs a Lineage node.")
         .subcommand(user::clap_app())
         .subcommand(miner::clap_app())
         .subcommand(mempool::clap_app())

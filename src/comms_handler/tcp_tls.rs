@@ -430,5 +430,5 @@ pub fn socket_name_mapping_or_default(
 }
 
 pub fn default_name_mapping(addr: SocketAddr) -> String {
-    format!("{}.{}.nodes.aiblock.ch", addr.ip(), addr.port())
+    format!("{}.{}.nodes.lineage.foundation", addr.ip(), addr.port())
 }

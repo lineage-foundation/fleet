@@ -1,179 +1,200 @@
 #!/bin/sh
+# Run from repository root (or any cwd — we anchor to the repo).
+# Optional: TLS_DOMAIN=other.example sh ... (default: lineage.foundation)
 
-echo " "
-echo "//-----------------------------//"
-echo "Generate keys in src/bin/tls_data"
-echo "//-----------------------------//"
-echo " "
+REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+cd "$REPO_ROOT" || exit 1
+SELF="$REPO_ROOT/src/bin/node_settings_gen_key_certs.sh"
+TLS_DOMAIN="${TLS_DOMAIN:-lineage.foundation}"
+DNS_NODES="nodes.${TLS_DOMAIN}"
+export TLS_DOMAIN DNS_NODES
 
-mkdir src/bin/tls_data
-cp cnf/ca_root.cnf src/bin/tls_data
-cp cnf/node.cnf src/bin/tls_data
-cd src/bin/tls_data
-
-if [ "$1" = "re_gen_root" ]
-then
-    echo "initial files"
-    echo 01 > ca_serial
-    echo 01 > ca_crlnumber
-
-    rm ca_index.txt ; touch ca_index.txt
-
-    echo "Generating CA Root cert"
-    openssl genpkey -algorithm Ed25519 -out ca_root.key
-    openssl req -config ca_root.cnf -new -key ca_root.key -nodes -out ca_root.csr -extensions v3_ca
-    openssl req -config ca_root.cnf -new -x509 -in ca_root.csr -key ca_root.key -out ca_root.pem -extensions v3_ca -days 999
-
-    echo "Generating CA Intermediate cert"
-    openssl genpkey -algorithm Ed25519 -out ca_intermediate.key
-    openssl req -config ca_root.cnf -new -key ca_intermediate.key -nodes -out ca_intermediate.csr -extensions v3_intermediate_ca -subj "/CN=ABlock Intermediate CA"
-    openssl ca -config ca_root.cnf -extensions v3_intermediate_ca -days 999 -notext -batch -in ca_intermediate.csr -out ca_intermediate.pem
-    cat ca_intermediate.pem ca_root.pem > ca_intermediate.bundle.pem
-
-    openssl verify -CAfile ca_root.pem ca_intermediate.pem
-    openssl verify -CAfile ca_root.pem ca_intermediate.bundle.pem
+if [ "$1" = "regen_all" ]; then
+  set -e
+  sh "$SELF" re_gen_root
+  sh "$SELF" re_gen_trusted_certs
+  sh "$SELF" re_gen_leaf_certs_and_keys
+  sh "$SELF" emit_json
+  exit 0
 fi
 
-if [ "$1" = "re_gen_leaf_certs" -o "$1" = "re_gen_leaf_certs_and_keys" -o "$1" = "re_gen_root" ]
-then
-  rm ca_index.txt ; touch ca_index.txt
+echo " "
+echo "//-----------------------------//"
+echo "Generate keys in src/bin/tls_data (TLS_DOMAIN=$TLS_DOMAIN)"
+echo "//-----------------------------//"
+echo " "
+
+mkdir -p src/bin/tls_data
+cp cnf/ca_root.cnf src/bin/tls_data
+cp cnf/node.cnf src/bin/tls_data
+cd src/bin/tls_data || exit 1
+
+if [ "$1" = "re_gen_root" ]; then
+  echo "initial files"
+  echo 01 > ca_serial
+  echo 01 > ca_crlnumber
+
+  rm -f ca_index.txt
+  touch ca_index.txt
+
+  echo "Generating CA Root cert"
+  openssl genpkey -algorithm Ed25519 -out ca_root.key
+  # Do not attach v3_* extensions to the CSR (OpenSSL 3: AKI `issuer` needs an issuing cert).
+  openssl req -config ca_root.cnf -new -key ca_root.key -nodes -out ca_root.csr
+  openssl req -config ca_root.cnf -new -x509 -in ca_root.csr -key ca_root.key -out ca_root.pem -extensions v3_ca -days 999
+
+  echo "Generating CA Intermediate cert"
+  openssl genpkey -algorithm Ed25519 -out ca_intermediate.key
+  openssl req -config ca_root.cnf -new -key ca_intermediate.key -nodes -out ca_intermediate.csr -subj "/CN=Lineage Intermediate CA"
+  openssl ca -config ca_root.cnf -extensions v3_intermediate_ca -days 999 -notext -batch -in ca_intermediate.csr -out ca_intermediate.pem
+  cat ca_intermediate.pem ca_root.pem > ca_intermediate.bundle.pem
+
+  openssl verify -CAfile ca_root.pem ca_intermediate.pem
+  openssl verify -CAfile ca_root.pem ca_intermediate.bundle.pem
+fi
+
+if [ "$1" = "re_gen_leaf_certs" ] || [ "$1" = "re_gen_leaf_certs_and_keys" ]; then
+  rm -f ca_index.txt
+  touch ca_index.txt
   port_v1=12500
-  for n in  node101 miner101 miner102 user101 user102
-  do
-    port_v1=$(($port_v1+10))
-    port_v2=$(($port_v1+1))
-    port_v3=$(($port_v1+2))
+  for n in node101 miner101 miner102 user101 user102; do
+    port_v1=$((port_v1 + 10))
+    port_v2=$((port_v1 + 1))
+    port_v3=$((port_v1 + 2))
     echo ""
     echo "Generating ... n is set to $n ($port_v1, $port_v2, $port_v3)"
     echo ""
 
-    if [ "$1" = "re_gen_leaf_certs_and_keys" ]
-    then
+    if [ "$1" = "re_gen_leaf_certs_and_keys" ]; then
       echo "Generating ... key & csr is set to $n"
-      openssl genpkey -algorithm Ed25519 -out $n.key
-      openssl req -config node.cnf -new -key $n.key -nodes -out $n.csr -subj "/CN=$n.aiblock.ch" -addext "subjectAltName=DNS:$n.aiblock.ch,DNS:127.0.0.1.$port_v1.nodes.aiblock.ch,DNS:127.0.0.1.$port_v2.nodes.aiblock.ch,DNS:127.0.0.1.$port_v3.nodes.aiblock.ch"
+      openssl genpkey -algorithm Ed25519 -out "$n.key"
+      openssl req -config node.cnf -new -key "$n.key" -nodes -out "$n.csr" \
+        -subj "/CN=$n.$TLS_DOMAIN" \
+        -addext "subjectAltName=DNS:$n.$TLS_DOMAIN,DNS:127.0.0.1.$port_v1.$DNS_NODES,DNS:127.0.0.1.$port_v2.$DNS_NODES,DNS:127.0.0.1.$port_v3.$DNS_NODES"
     fi
 
     cp ca_root.cnf temp.cnf
-    printf "\n[SAN]\nsubjectAltName=DNS:$n.aiblock.ch,DNS:127.0.0.1.$port_v1.nodes.aiblock.ch,DNS:127.0.0.1.$port_v2.nodes.aiblock.ch,DNS:127.0.0.1.$port_v3.nodes.aiblock.ch\nextendedKeyUsage = serverAuth, clientAuth, codeSigning, emailProtection\nbasicConstraints = CA:FALSE\nkeyUsage = nonRepudiation, digitalSignature, keyEncipherment\n" >> temp.cnf
+    printf '\n[SAN]\nsubjectAltName=DNS:%s.%s,DNS:127.0.0.1.%s.%s,DNS:127.0.0.1.%s.%s,DNS:127.0.0.1.%s.%s\nextendedKeyUsage = serverAuth, clientAuth, codeSigning, emailProtection\nbasicConstraints = CA:FALSE\nkeyUsage = nonRepudiation, digitalSignature, keyEncipherment\n' \
+      "$n" "$TLS_DOMAIN" "$port_v1" "$DNS_NODES" "$port_v2" "$DNS_NODES" "$port_v3" "$DNS_NODES" >> temp.cnf
 
-    openssl ca -config temp.cnf -extensions SAN -cert ca_intermediate.pem -keyfile ca_intermediate.key -days 999 -notext -batch -in $n.csr -out $n.pem
-    cat $n.pem ca_intermediate.bundle.pem > $n.bundle.pem
+    openssl ca -config temp.cnf -extensions SAN -cert ca_intermediate.pem -keyfile ca_intermediate.key -days 999 -notext -batch -in "$n.csr" -out "$n.pem"
+    cat "$n.pem" ca_intermediate.bundle.pem > "$n.bundle.pem"
 
-    openssl verify -CAfile ca_intermediate.bundle.pem $n.pem
-    openssl verify -CAfile ca_root.pem -untrusted $n.bundle.pem $n.pem
+    openssl verify -CAfile ca_intermediate.bundle.pem "$n.pem"
+    openssl verify -CAfile ca_root.pem -untrusted "$n.bundle.pem" "$n.pem"
   done
 fi
 
-if [ "$1" = "re_gen_trusted_certs" ]
-then
-  for n in node mempool1 mempool2 mempool3 storage1 storage2 storage3 miner1 miner2 miner3 miner4 miner5 miner6 miner7 miner8 miner9 miner10 user1 user2 user3
-  do
-    openssl genpkey -algorithm Ed25519 -out $n.key
-    openssl req -config node.cnf -new -key $n.key -nodes -out $n.csr -subj "/CN=$n.aiblock.ch" -addext "subjectAltName = DNS:$n.aiblock.ch"
-    openssl req -config node.cnf -new -x509 -in $n.csr -key $n.key -out $n.pem -addext "subjectAltName = DNS:$n.aiblock.ch" -days 999
+if [ "$1" = "re_gen_trusted_certs" ]; then
+  for n in node mempool1 mempool2 mempool3 storage1 storage2 storage3 miner1 miner2 miner3 miner4 miner5 miner6 miner7 miner8 miner9 miner10 user1 user2 user3; do
+    openssl genpkey -algorithm Ed25519 -out "$n.key"
+    openssl req -config node.cnf -new -key "$n.key" -nodes -out "$n.csr" -subj "/CN=$n.$TLS_DOMAIN" -addext "subjectAltName = DNS:$n.$TLS_DOMAIN"
+    openssl req -config node.cnf -new -x509 -in "$n.csr" -key "$n.key" -out "$n.pem" -addext "subjectAltName = DNS:$n.$TLS_DOMAIN" -days 999
   done
 fi
 
-echo " "
-echo "//-----------------------------//"
-echo "Generate JSON in src/bin/tls_data: REQUIRE jq executable"
-echo "//-----------------------------//"
-echo " "
+if [ "$1" = "emit_json" ]; then
+  echo " "
+  echo "//-----------------------------//"
+  echo "Generate JSON in src/bin/tls_data: REQUIRE jq executable"
+  echo "//-----------------------------//"
+  echo " "
 
-rm tls_certificates.json
-rm test_tls_certificates.rs
-echo "{" >> tls_certificates.json
-echo "    \"file_comment\": [" >> tls_certificates.json
-echo "        \"/// !!! AUTOGENERATED: DO NOT EDIT !!!\"," >> tls_certificates.json
-echo "        \"/// Generated with: src/bin/node_settings_gen_key_certs.sh\"" >> tls_certificates.json
-echo "    ]," >> tls_certificates.json
-echo "    \"tls_config\": {" >> tls_certificates.json
-echo "        \"pem_certificates\": {" >> tls_certificates.json
+  rm -f tls_certificates.json test_tls_certificates.rs
+  echo "{" >> tls_certificates.json
+  echo "    \"file_comment\": [" >> tls_certificates.json
+  echo "        \"/// !!! AUTOGENERATED: DO NOT EDIT !!!\"," >> tls_certificates.json
+  echo "        \"/// Generated with: src/bin/node_settings_gen_key_certs.sh\"" >> tls_certificates.json
+  echo "    ]," >> tls_certificates.json
+  echo "    \"tls_config\": {" >> tls_certificates.json
+  echo "        \"pem_certificates\": {" >> tls_certificates.json
 
-echo "/// !!! AUTOGENERATED: DO NOT EDIT !!!" >> test_tls_certificates.rs
-echo "/// Generated with: \`src/bin/node_settings_gen_key_certs.sh\`" >> test_tls_certificates.rs
-echo "" >> test_tls_certificates.rs
-echo "/// PEM certificates for node DNS names" >> test_tls_certificates.rs
-echo "pub const TEST_PEM_CERTIFICATES: &[(&str, &str)] = &[" >> test_tls_certificates.rs
+  echo "/// !!! AUTOGENERATED: DO NOT EDIT !!!" >> test_tls_certificates.rs
+  echo "/// Generated with: \`src/bin/node_settings_gen_key_certs.sh\`" >> test_tls_certificates.rs
+  echo "" >> test_tls_certificates.rs
+  echo "/// PEM certificates for node DNS names" >> test_tls_certificates.rs
+  echo "pub const TEST_PEM_CERTIFICATES: &[(&str, &str)] = &[" >> test_tls_certificates.rs
 
-for n in ca_root mempool1 mempool2 mempool3 storage1 storage2 storage3 miner1 miner2 miner3 miner4 miner5 miner6 miner7 miner8 miner9 miner10 user1 user2 user3
-do
-  echo "Generating test json and rs cert ... n is set to $n"
-  printf "            \"$n.aiblock.ch\": %s,\n" "$(jq -Rs . <$n.pem)" >> tls_certificates.json
-  printf "(\"$n.aiblock.ch\", %s),\n" "$(jq -Rs . <$n.pem)" >> test_tls_certificates.rs
-done
+  for n in ca_root mempool1 mempool2 mempool3 storage1 storage2 storage3 miner1 miner2 miner3 miner4 miner5 miner6 miner7 miner8 miner9 miner10 user1 user2 user3; do
+    echo "Generating test json and rs cert ... n is set to $n"
+    printf '            "%s.%s": %s,\n' "$n" "$TLS_DOMAIN" "$(jq -Rs . <"$n.pem")" >> tls_certificates.json
+    printf '("%s.%s", %s),\n' "$n" "$TLS_DOMAIN" "$(jq -Rs . <"$n.pem")" >> test_tls_certificates.rs
+  done
 
-printf "            \"node.aiblock.ch\": %s\n" "$(jq -Rs . <node.pem)" >> tls_certificates.json
-echo "        }," >> tls_certificates.json
-echo "        \"pem_pkcs8_private_keys\": {" >> tls_certificates.json
+  printf '            "node.%s": %s\n' "$TLS_DOMAIN" "$(jq -Rs . <node.pem)" >> tls_certificates.json
+  echo "        }," >> tls_certificates.json
+  echo "        \"pem_pkcs8_private_keys\": {" >> tls_certificates.json
 
-printf "(\"node.aiblock.ch\", %s),\n" "$(jq -Rs . <node.pem)" >> test_tls_certificates.rs
-echo "];" >> test_tls_certificates.rs
-echo "" >> test_tls_certificates.rs
-echo "/// PKCS8 Keys for node DNS names" >> test_tls_certificates.rs
-echo "pub const TEST_PKCS8_KEYS: &[(&str, &str)] = &[" >> test_tls_certificates.rs
+  printf '("node.%s", %s),\n' "$TLS_DOMAIN" "$(jq -Rs . <node.pem)" >> test_tls_certificates.rs
+  echo "];" >> test_tls_certificates.rs
+  echo "" >> test_tls_certificates.rs
+  echo "/// PKCS8 Keys for node DNS names" >> test_tls_certificates.rs
+  echo "pub const TEST_PKCS8_KEYS: &[(&str, &str)] = &[" >> test_tls_certificates.rs
 
-for n in mempool1 mempool2 mempool3 storage1 storage2 storage3 miner1 miner2 miner3 miner4 miner5 miner6 miner7 miner8 miner9 miner10 user1 user2 user3
-do
-  echo "Generating test json and rs keys ... n is set to $n"
-  printf "            \"$n.aiblock.ch\": %s,\n" "$(jq -Rs . <$n.key)" >> tls_certificates.json
-  printf "(\"$n.aiblock.ch\", %s),\n" "$(jq -Rs . <$n.key)" >> test_tls_certificates.rs
-done
+  for n in mempool1 mempool2 mempool3 storage1 storage2 storage3 miner1 miner2 miner3 miner4 miner5 miner6 miner7 miner8 miner9 miner10 user1 user2 user3; do
+    echo "Generating test json and rs keys ... n is set to $n"
+    printf '            "%s.%s": %s,\n' "$n" "$TLS_DOMAIN" "$(jq -Rs . <"$n.key")" >> tls_certificates.json
+    printf '("%s.%s", %s),\n' "$n" "$TLS_DOMAIN" "$(jq -Rs . <"$n.key")" >> test_tls_certificates.rs
+  done
 
-printf "            \"node.aiblock.ch\": %s\n" "$(jq -Rs . <node.key)" >> tls_certificates.json
-echo "        }," >> tls_certificates.json
-echo "        \"socket_name_mapping\": {" >> tls_certificates.json
-echo "            \"127.0.0.1:12300\": \"mempool1.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12301\": \"mempool2.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12302\": \"mempool3.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12330\": \"storage1.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12331\": \"storage2.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12332\": \"storage3.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12340\": \"miner1.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12341\": \"miner2.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12342\": \"miner3.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12343\": \"miner4.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12344\": \"miner5.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12345\": \"miner6.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12346\": \"miner7.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12347\": \"miner8.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12348\": \"miner9.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12349\": \"miner10.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12360\": \"user1.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12361\": \"user2.aiblock.ch\"," >> tls_certificates.json
-echo "            \"127.0.0.1:12362\": \"user3.aiblock.ch\"" >> tls_certificates.json
-echo "        }" >> tls_certificates.json
-echo "    }" >> tls_certificates.json
-echo "}" >> tls_certificates.json
+  printf '            "node.%s": %s\n' "$TLS_DOMAIN" "$(jq -Rs . <node.key)" >> tls_certificates.json
+  echo "        }," >> tls_certificates.json
+  echo "        \"socket_name_mapping\": {" >> tls_certificates.json
+  echo "            \"127.0.0.1:12300\": \"mempool1.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12301\": \"mempool2.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12302\": \"mempool3.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12330\": \"storage1.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12331\": \"storage2.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12332\": \"storage3.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12340\": \"miner1.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12341\": \"miner2.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12342\": \"miner3.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12343\": \"miner4.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12344\": \"miner5.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12345\": \"miner6.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12346\": \"miner7.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12347\": \"miner8.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12348\": \"miner9.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12349\": \"miner10.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12360\": \"user1.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12361\": \"user2.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"127.0.0.1:12362\": \"user3.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"172.28.0.3:12300\": \"mempool1.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"172.28.0.2:12330\": \"storage1.$TLS_DOMAIN\"," >> tls_certificates.json
+  echo "            \"172.28.0.4:12340\": \"miner1.$TLS_DOMAIN\"" >> tls_certificates.json
+  echo "        }" >> tls_certificates.json
+  echo "    }" >> tls_certificates.json
+  echo "}" >> tls_certificates.json
 
-printf "(\"node.aiblock.ch\", %s),\n" "$(jq -Rs . <node.key)" >> test_tls_certificates.rs
-echo "];" >> test_tls_certificates.rs
+  printf '("node.%s", %s),\n' "$TLS_DOMAIN" "$(jq -Rs . <node.key)" >> test_tls_certificates.rs
+  echo "];" >> test_tls_certificates.rs
 
-echo "" >> test_tls_certificates.rs
-echo "/// PEM certificates for node DNS names" >> test_tls_certificates.rs
-echo "pub const TEST_PEM_CERTIFICATES_WITH_CA: &[(&str, &str)] = &[" >> test_tls_certificates.rs
+  echo "" >> test_tls_certificates.rs
+  echo "/// PEM certificates for node DNS names" >> test_tls_certificates.rs
+  echo "pub const TEST_PEM_CERTIFICATES_WITH_CA: &[(&str, &str)] = &[" >> test_tls_certificates.rs
 
-for n in node101 miner101 miner102 user101 user102
-do
-  echo "Generating test rs cert ... n is set to $n"
-  printf "(\"$n.aiblock.ch\", %s),\n" "$(jq -Rs . <$n.bundle.pem)" >> test_tls_certificates.rs
-done
+  for n in node101 miner101 miner102 user101 user102; do
+    echo "Generating test rs cert ... n is set to $n"
+    printf '("%s.%s", %s),\n' "$n" "$TLS_DOMAIN" "$(jq -Rs . <"$n.bundle.pem")" >> test_tls_certificates.rs
+  done
 
-echo "];" >> test_tls_certificates.rs
-echo "" >> test_tls_certificates.rs
-echo "/// PKCS8 Keys for node DNS names" >> test_tls_certificates.rs
-echo "pub const TEST_PKCS8_KEYS_WITH_CA: &[(&str, &str)] = &[" >> test_tls_certificates.rs
+  echo "];" >> test_tls_certificates.rs
+  echo "" >> test_tls_certificates.rs
+  echo "/// PKCS8 Keys for node DNS names" >> test_tls_certificates.rs
+  echo "pub const TEST_PKCS8_KEYS_WITH_CA: &[(&str, &str)] = &[" >> test_tls_certificates.rs
 
-for n in node101 miner101 miner102 user101 user102
-do
-  echo "Generating test rs keys ... n is set to $n"
-  printf "(\"$n.aiblock.ch\", %s),\n" "$(jq -Rs . <$n.key)" >> test_tls_certificates.rs
-done
+  for n in node101 miner101 miner102 user101 user102; do
+    echo "Generating test rs keys ... n is set to $n"
+    printf '("%s.%s", %s),\n' "$n" "$TLS_DOMAIN" "$(jq -Rs . <"$n.key")" >> test_tls_certificates.rs
+  done
 
-echo "];" >> test_tls_certificates.rs
+  echo "];" >> test_tls_certificates.rs
 
-
-mv tls_certificates.json ../tls_certificates.json
-mv test_tls_certificates.rs ../../comms_handler/test_tls_certificates.rs
-rm temp.cnf *.old *.attr [0-9A-F]*.pem
+  mv tls_certificates.json ../tls_certificates.json
+  mv test_tls_certificates.rs ../../comms_handler/test_tls_certificates.rs
+  rm -f temp.cnf ./*.old ./*.attr
+  # Remove OpenSSL CA artifact serial files (hex .pem) but keep generated leaf material
+  for f in [0-9A-F][0-9A-F]*.pem; do
+    [ -e "$f" ] && rm -f "$f"
+  done
+fi

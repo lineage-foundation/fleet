@@ -88,7 +88,7 @@ Optional: rebuild one service (`docker compose build mempool-node`). Stop and re
 docker build -t fleet-node:local --platform linux/amd64 .
 ```
 
-The final stage runs as **`nonroot`** (distroless `cc-debian12` digest-pinned plus X11 runtime `.so` copied from Debian bookworm). Inspect `Dockerfile` for exact `FROM` digests after pull-through mirrors.
+The final stage runs as **`nonroot`**; the shipped binary is **`/lineage/lineage`** (distroless **`cc-debian12`**, digest-pinned, plus X11 runtime `.so` copied from Debian bookworm). Inspect `Dockerfile` for exact `FROM` digests after pull-through mirrors.
 
 ---
 
