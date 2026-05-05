@@ -6,3 +6,6 @@ AVD-DS-0001
 
 # https://avd.aquasec.com/misconfig/dockerfile/general/avd-ds-0026/
 AVD-DS-0026
+
+# RUSTSEC-2026-0104 / GHSA-82j2-j2ch-gfr8: rustls-webpki CRL DER panic — only applications using CRL revocation with attacker-controlled CRL bytes. Fleet's warp HTTPS and tokio-rustls P2P paths use default rustls verifier (no RevocationOptions). Upstream semver: rustls 0.22/0.23 require rustls-webpki ^0.102.x (<0.103); fixed 0.103.13 is not resolvable until those crates widen their range — track rustls/webpki releases and remove when lockfile picks ≥0.103.13.
+GHSA-82j2-j2ch-gfr8

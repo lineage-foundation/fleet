@@ -181,10 +181,10 @@ pub fn create_new_cache(time_to_live: u64) -> ReplyCache {
         .build()
 }
 
-//gets cache value from BTreeMap. Clears old values if 24 hours has passed since the last clear.
+//gets cache value from moka future cache (async get in moka ≥0.12).
 //ReplyCache is a moka::future::cache of type <String, Result<JsonReply, JsonReply>>
-fn get_cache_value(call_id: &str, cache: &ReplyCache) -> Option<Result<JsonReply, JsonReply>> {
-    cache.get(&String::from(call_id))
+async fn get_cache_value(call_id: &str, cache: &ReplyCache) -> Option<Result<JsonReply, JsonReply>> {
+    cache.get(call_id).await
 }
 
 //inserts cache value into BTreeMap. Clears old values if 24 hours has passed since the last clear.
@@ -206,8 +206,7 @@ pub async fn get_or_insert_cache_value(
     cache: ReplyCache,
     r: impl Future<Output = Result<JsonReply, JsonReply>>,
 ) -> Result<JsonReply, JsonReply> {
-    let fetched_value = get_cache_value(&call_id, &cache);
-    if let Some(value) = fetched_value {
+    if let Some(value) = get_cache_value(&call_id, &cache).await {
         return value;
     }
 

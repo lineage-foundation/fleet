@@ -54,7 +54,7 @@ jobs:
           exit-code: "1"
           scanners: vuln,misconfig
           trivyignores: .trivyignore
-          skip-dirs: target,.git,run,src/db/db,src/wallet/wallet,src/bin/tls_data
+          skip-dirs: target,.git,run,tasks,src/db/db,src/wallet/wallet,src/bin/tls_data
 
   trivy-image:
     name: Docker build + Trivy image

@@ -328,7 +328,11 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
 
     let mut db_mode = settings.get_table("user_db_mode").unwrap();
     if let Some(test_idx) = db_mode.get_mut("Test") {
-        let index = node_index + test_idx.clone().try_into::<usize>().unwrap();
+        let index = node_index
+            + test_idx
+                .clone()
+                .try_deserialize::<usize>()
+                .expect("user_db_mode.Test must be usize-compatible");
         *test_idx = Value::new(None, index.to_string());
         settings.set("user_db_mode", db_mode).unwrap();
     }
@@ -380,7 +384,7 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
 }
 
 fn configuration(settings: config::Config) -> UserNodeConfig {
-    settings.try_into().unwrap()
+    settings.try_deserialize().unwrap()
 }
 
 fn default_user_test_auto_gen_setup() -> HashMap<String, Value> {

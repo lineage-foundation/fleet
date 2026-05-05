@@ -330,7 +330,7 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
 }
 
 fn configuration(settings: config::Config) -> MempoolNodeConfig {
-    settings.try_into().unwrap()
+    settings.try_deserialize().unwrap()
 }
 
 #[cfg(test)]
