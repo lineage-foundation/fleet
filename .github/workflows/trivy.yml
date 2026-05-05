@@ -1,0 +1,84 @@
+# Trivy: repository (vuln + misconfiguration) and built container image.
+# Fails the job on CRITICAL or HIGH severity findings (see `.trivyignore` for justified exceptions).
+name: Trivy
+
+on:
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".docker/**"
+      - ".github/workflows/trivy.yml"
+      - ".trivyignore"
+      - "Cargo.lock"
+      - "Cargo.toml"
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".docker/**"
+      - ".github/workflows/trivy.yml"
+      - ".trivyignore"
+      - "Cargo.lock"
+      - "Cargo.toml"
+  workflow_dispatch:
+
+concurrency:
+  group: trivy-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_TAG: fleet-node:ci
+  TRIVY_SEVERITY: CRITICAL,HIGH
+
+jobs:
+  trivy-repo:
+    name: Trivy filesystem (repo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy (FS — vuln, misconfiguration)
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: fs
+          scan-ref: "."
+          severity: ${{ env.TRIVY_SEVERITY }}
+          exit-code: "1"
+          scanners: vuln,misconfig
+          trivyignores: .trivyignore
+          skip-dirs: target,.git,run,src/db/db,src/wallet/wallet,src/bin/tls_data
+
+  trivy-image:
+    name: Docker build + Trivy image
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (linux/amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_TAG }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Trivy (container image)
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_TAG }}
+          severity: ${{ env.TRIVY_SEVERITY }}
+          exit-code: "1"
+          trivyignores: .trivyignore

@@ -1,8 +1,8 @@
-# Accept the risk
+# Exceptions must map to an https://avd.aquasec.com/ AVD ID and a one-line justification.
 
-
-# Ignore misconfigurations
+# Misconfig: Dockerfile/compose policy (historic; re-validate when Dockerfile changes).
 # https://avd.aquasec.com/misconfig/dockerfile/general/avd-ds-0001/
 AVD-DS-0001
+
 # https://avd.aquasec.com/misconfig/dockerfile/general/avd-ds-0026/
 AVD-DS-0026

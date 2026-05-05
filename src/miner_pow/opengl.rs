@@ -740,7 +740,7 @@ mod gl_wrapper {
                 check_error("glGetShaderiv(GL_INFO_LOG_LENGTH)")?;
 
                 if info_log_length != 0 {
-                    let mut info_log = vec![0i8; info_log_length as usize];
+                    let mut info_log = vec![0u8; info_log_length as usize];
                     let mut actual_info_log_length: GLsizei = 0;
                     unsafe {
                         gl::GetShaderInfoLog(
@@ -752,8 +752,8 @@ mod gl_wrapper {
                     };
                     check_error("glGetShaderInfoLog")?;
 
-                    let info_log_u8s = info_log.into_iter().map(|c| c as u8).collect::<Vec<_>>();
-                    String::from_utf8_lossy(&info_log_u8s).as_ref().into()
+                    let n = (actual_info_log_length as usize).min(info_log.len());
+                    String::from_utf8_lossy(&info_log[..n]).as_ref().into()
                 } else {
                     Default::default()
                 }
@@ -847,7 +847,7 @@ mod gl_wrapper {
                 check_error("glGetProgramiv(GL_INFO_LOG_LENGTH)")?;
 
                 if info_log_length != 0 {
-                    let mut info_log = vec![0i8; info_log_length as usize];
+                    let mut info_log = vec![0u8; info_log_length as usize];
                     let mut actual_info_log_length: GLsizei = 0;
                     unsafe {
                         gl::GetProgramInfoLog(
@@ -859,8 +859,8 @@ mod gl_wrapper {
                     };
                     check_error("glGetProgramInfoLog")?;
 
-                    let info_log_u8s = info_log.into_iter().map(|c| c as u8).collect::<Vec<_>>();
-                    String::from_utf8_lossy(&info_log_u8s).as_ref().into()
+                    let n = (actual_info_log_length as usize).min(info_log.len());
+                    String::from_utf8_lossy(&info_log[..n]).as_ref().into()
                 } else {
                     Default::default()
                 }
