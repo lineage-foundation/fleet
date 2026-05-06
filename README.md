@@ -4,9 +4,9 @@
   </a>
 
   <h2 align="center">Lineage Fleet</h2> <div style="height:30px"></div>
-<!-- 
+<!--
   <div>
-  <img src="https://img.shields.io/github/actions/workflow/status/AIBlockOfficial/Chain/.github/workflows/rust.yml?branch=main" alt="Pipeline Status" style="display:inline-block"/>
+  <img src="https://img.shields.io/github/actions/workflow/status/lineage-foundation/fleet/.github/workflows/trivy.yml?branch=main" alt="Pipeline Status" style="display:inline-block"/>
   <img src="https://img.shields.io/crates/v/tw_chain" alt="Cargo Crates Version" style="display:inline-block" />
   </div> -->
 
@@ -14,150 +14,144 @@
     The network layer for the Lineage chain.
     <br />
     <br />
-    <a href="https://aiblock.dev"><strong>Official documentation »</strong></a>
+    <a href="https://lineage.foundation"><strong>Lineage Foundation »</strong></a>
     <br />
     <br />
   </p>
 </div>
 
-**Repository:** [lineage-foundation/fleet](https://github.com/lineage-foundation/fleet) — migrated from [AIBlockOfficial/Network](https://github.com/AIBlockOfficial/Network).
+**Repository:** [lineage-foundation/fleet](https://github.com/lineage-foundation/fleet)
 
-..
+---
 
-## Setup
+## Developing from source
 
-Lineage Fleet runs on Rust, so installing this is the first step before dealing with any code. You can install `rustup`, Rust's toolchain installer, by running the following:
+Lineage Fleet is a Rust workspace. Install a recent toolchain via [rustup](https://rustup.rs), then clone this repository. On Linux you may need build dependencies similar to the `chef` stage in the root `Dockerfile` (LLVM/Clang, X11/Glfw headers, and related packages).
 
-```
+```bash
 curl https://sh.rustup.rs -sSf | sh
-```
-
-When asked how to proceed, simply selecting the option `1) Proceed with installation` is generally the best. You can then run the following to update the `PATH` variable and check whether everything installed correctly:
-
-```
-source $HOME/.cargo/env
+source "$HOME/.cargo/env"
 rustc --version
 ```
 
-If the terminal responds with the `rustc` version you're currently running then everything went well, and you're ready to go. 
+On Ubuntu-class systems:
 
-### Linux
-
-Linux (Ubuntu 20.04.01 LTS) may require extra package installations depending on what you've developed before. The following package installs assume a completely new machine instance, and should cover everything you need to get going:
-
-```
-sudo apt install build-essential
-sudo apt-get install m4
-sudo apt-get install llvm
-sudo apt-get install libclang-dev
-sudo apt install clang
+```bash
+sudo apt-get update && sudo apt-get install -y \
+  build-essential m4 llvm libclang-dev clang cmake pkg-config \
+  git curl python3 libglfw3-dev libxrandr-dev libxinerama-dev \
+  libxcursor-dev libxi-dev
 ```
 
-The above should enable you to install `librocksdb-sys` successfully, but older versions of this crate had bugs so it would be wise to ensure you've installed `rocksdb = "0.21.0"` or higher in order to avoid compilation issues.
+For day-to-day work: `cargo build --release`, `cargo test`, and IDE integration work as usual. **For a multi-node local stack, prefer Docker Compose** (next section)—it mirrors the hardened runtime and pinned base images CI uses.
 
-..
+---
 
-## Running Nodes Locally
+## Running with Docker Compose
 
-You can build everything by running
+[`docker-compose.yml`](docker-compose.yml) runs **mempool**, **storage**, and **miner** on an isolated bridge network (`lineage`). The miner starts after mempool and storage via `depends_on`.
 
-```rust
-cargo build --release
+**Defaults**
+
+| Item | Behaviour |
+|------|-----------|
+| Build | `fleet-node:local`, same `Dockerfile` as CI |
+| Platform | `linux/amd64` (`FLEET_COMPOSE_PLATFORM=linux/arm64` for Apple Silicon–native builds) |
+| Writable DB | Per-service `/src` backed by a tmpfs named volume (`uid=65532`, distroless nonroot); reset with `docker compose down -v` after changing volumes |
+| Config | Only **one** bind mount from the host: `./.docker/conf/node_settings.toml` → `/etc/node_settings.toml` (override path with `NODE_SETTINGS`) |
+| Hardening | `read_only: true`, `/tmp` tmpfs, `cap_drop: [ALL]`, `no-new-privileges` |
+
+**Quick start**
+
+From the repo root:
+
+```bash
+docker compose build
+docker compose up
 ```
 
-This will compile everything into a release state, from which you can then run your nodes locally. The following are example commands for each type to get you up and running quickly:
+Customize the settings path:
 
-- **Mempool**: `RUST_LOG=warp target/release/node mempool --config=src/bin/node_settings_local_raft_1.toml`
-- **Storage**: `RUST_LOG=warp target/release/node storage --config=src/bin/node_settings_local_raft_1.toml`
-- **Miner**: `RUST_LOG=warp target/release/node miner --config=src/bin/node_settings_local_raft_1.toml`
-- **User**: `RUST_LOG=warp target/release/node user --config=src/bin/node_settings_local_raft_1.toml`
-
-You can provide a number of flags to the command depending on the type of node, and you can view information on the available flags for each node type by running the compiled binary with the `--help` flag (e.g. `target/release/storage --help`). You can also run a full, 1 node system in your local environment by running `sh src/bin/node_settings_local_raft_1_run.sh` and perusing the generated logs. 
-
-If you run into TLS problems on the API routes, you can pass `--api_use_tls=0` to the shell script in order to disable TLS. **Note that this will create a security concern**, so it's best not to use this too frequently or for anything public facing.
-
-..
-
-
-## Git Flow
-
-**When working on this repo, please ensure that any branches you may create pull from `develop` regularly. In doing this you 
-ensure that your local version has the latest code for the project and minimizes the possibility of unnecessary merge 
-conflicts.**
-
-This repository’s historical workflow used `develop` as the integration branch. For Lineage Foundation, use feature branches and pull requests to `main` per [CONTRIBUTING.md](CONTRIBUTING.md). The following still illustrates a typical branch checkout from `develop` if that branch exists locally:
-
-```
-git checkout -b branch_name
+```bash
+NODE_SETTINGS=/absolute/path/to/node_settings.toml docker compose up
 ```
 
-where `branch_name` would be replaced with your chosen branch name. There is no general branch naming convention aside from two cases:
+The first image build downloads toolchains and compiles everything; subsequent runs are faster. Published ports match the bundled example settings (`3003` mempool API, `3001` storage, etc.—see Compose `ports:`).
 
-- *New features*: These should be prefixed with `feature_` and then the branch name (e.g. `feature_new_cool_feature`)
-- *Bugfixes*: These should be prefixed with `bugfix_` and then the branch name (e.g. `bugfix_new_damn_bug`)
+Optional: rebuild one service (`docker compose build mempool-node`). Stop and remove volumes: `docker compose down -v`.
 
-Beyond this, it is only expected that branches have sensible naming that describes what the branch involves or is for.
+---
 
-..
+## Building only the container image
 
-## Deployment
-
-Steps to deploy the node binaries in choice of your environment.
-
-- Run the pipeline for branch of your choice with following variables.
-- Set `deploy_binaries` to `true` to enforce infrastructure changes.
-- Set `ai_block_env` with choice of your environment. e.g - `dev-stg`, `dev-byron` etc.
-- Successful run of `infra` pipeline will present with you IP addresses of different nodes.
-- IP address of node will still need to be configured in `node_settings.toml` and `tls_certificates.json` manually post rollout.
-
-..
-
-## Documentation
-
-Documentation can be built locally with rustdoc by running the following command:
-
-```
-cargo +nightly doc --document-private-items
+```bash
+docker build -t fleet-node:local --platform linux/amd64 .
 ```
 
-The resulting documentation can be found in `target/doc/system/index.html`.
+The final stage runs as **`nonroot`**; the shipped binary is **`/lineage/lineage`** (distroless **`cc-debian13`**, digest-pinned, plus X11 runtime `.so` copied from **`debian:trixie-slim`** so glibc matches the distroless Debian 13 base). Inspect `Dockerfile` for exact `FROM` digests after pull-through mirrors.
 
-Nightly is required because one of dependencies (`gmp-mpfr-sys`) uses unstable features.
+---
 
-## Trivy Code Scanning Exceptions
+## Bumping pinned base images
 
-Trivy scanning will run for each PR submitted although there is a mechanism via which certain rules can be ignored:
+The root `Dockerfile` pins **immutable digests** for:
 
-Take the following output as an example
+- **`rust:X.Y-bookworm`** (chef / build stages; see `Dockerfile` for current `X.Y` and digest),
+- **`debian:trixie-slim`** (temporary stage that installs X11 runtime `.so` files copied into the final image; trixie so libraries match distroless Debian 13),
+- **`gcr.io/distroless/cc-debian13`** (runtime).
 
-```
-Dockerfile (dockerfile)
+Recommended flow:
 
-Tests: 27 (SUCCESSES: 25, FAILURES: 2, EXCEPTIONS: 0)
-Failures: 2 (UNKNOWN: 0, LOW: 1, MEDIUM: 1, HIGH: 0, CRITICAL: 0)
+1. Choose the **Rust toolchain** revision you want (`rust:X.Y-bookworm`), matching Cargo / lockfile constraints.
+2. Pull candidate images; copy the SHA256 digest from your registry mirror or vendor docs (`docker manifest inspect …` or your cloud console).
+3. Update each `FROM …@sha256:…` in `Dockerfile` in one atomic commit.
+4. Re-run `docker build --platform linux/amd64 …` locally and let **CI Trivy** pass on CRITICAL/HIGH.
+5. If `cargo-chef` fails after a toolchain jump, bump the pinned `cargo install cargo-chef --version …` line only if absolutely required—record why in the commit message.
 
-MEDIUM: Specify a tag in the 'FROM' statement for image 'cgr.dev/chainguard/glibc-dynamic'
-══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-When using a 'FROM' statement you should use a specific tag to avoid uncontrolled behavior when the image is updated.
+Owner / merge policy: bumps are normal maintenance PRs; default reviewer same as infra or core Rust changes—align with team practice.
 
-See https://avd.aquasec.com/misconfig/ds001
-──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Dockerfile:20
-──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  20 [ FROM cgr.dev/chainguard/glibc-dynamic:latest
-```
+---
 
-Here we can see the rules is located at https://avd.aquasec.com/misconfig/ds001 and when navigating to the url --> https://avd.aquasec.com/misconfig/dockerfile/general/avd-ds-0001/
+## Git flow
 
-The last portion of the url can always be used as the ID i.e avd-ds-0001 --> AVD-DS-0001, so if we wanted to ignore this rule we would add the following to the .trivyignore file
+Base new work on an up-to-date **`main`** (fetch and merge or rebase from `origin/main` as your team prefers). Open pull requests to **`main`** per [CONTRIBUTING.md](CONTRIBUTING.md).
+
+**Commit messages** follow the [Conventional Commits](https://www.conventionalcommits.org/) specification:
+
+- Use a type and optional scope: `type(scope): short summary` (imperative mood: *add*, *fix*, not *added*). Common types include `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`, and `perf`.
+- Mark breaking changes with `!` after the type/scope (e.g. `feat(api)!: …`) and/or a `BREAKING CHANGE:` paragraph in the commit body, per the spec.
+- Keep the first line within ~72 characters; put detail in the body when needed.
+
+Branch names are up to your team; what matters for history and releases is consistent **Conventional Commits** on `main`.
+
+---
+
+## Trivy scanning
+
+Workflow [`.github/workflows/trivy.yml`](.github/workflows/trivy.yml) runs:
+
+- **`trivy fs`** — vulnerabilities + misconfiguration on the repository (respects [.trivyignore](.trivyignore))
+- **`trivy image`** — vulnerabilities on the freshly built **`fleet-node:ci`** image
+
+Pull requests touching `Dockerfile`, Compose, Cargo, `.docker/`, `.trivyignore`, or the workflow itself gate on **severity `CRITICAL` and `HIGH`** (see workflow `env.TRIVY_SEVERITY`).
+
+### Handling policy exceptions
+
+Trivy misconfiguration hits include rules such as Dockerfile `FROM …` pinning. Exceptions belong in [.trivyignore](.trivyignore) **only as stable AVD IDs** with one-line rationale. Look up IDs on [AVD Aquasec](https://avd.aquasec.com/) (`avd-ds-0001` → `AVD-DS-0001`).
+
+Example excerpt (today’s allowances—re-validate whenever `Dockerfile` changes):
 
 **.trivyignore**
 
 ```
-# Ignore misconfigurations
-# https://avd.aquasec.com/misconfig/dockerfile/general/avd-ds-0001/
+# Exceptions must map to an https://avd.aquasec.com/ AVD ID and a one-line justification.
+
+# Misconfig re-evaluated alongside Dockerfile bumps.
 AVD-DS-0001
+AVD-DS-0026
 ```
+
+Do **not** add blanket ignores without an AVD and owner review.
 
 ## Links
 
@@ -170,5 +164,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-GPL-3.0 — see [LICENSE](LICENSE). This project was contributed under the same terms as the upstream AIBlock Network codebase.
-
+GPL-3.0 — see [LICENSE](LICENSE). This project continues the open-source Network lineage under the same license.

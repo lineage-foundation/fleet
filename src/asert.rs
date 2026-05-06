@@ -13,7 +13,7 @@ use {
     tw_chain::{crypto::sha3_256, primitives::block::BlockHeader},
 };
 
-/// Maps AIBlock PoW parameters to ASERT inputs then computes and returns the
+/// Maps Lineage PoW parameters to ASERT inputs then computes and returns the
 /// PoW target for a given block.
 pub fn calculate_asert_target(
     activation_height: u64,

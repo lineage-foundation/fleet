@@ -1,54 +1,105 @@
-FROM --platform=$BUILDPLATFORM rust:1.79.0-slim-bullseye AS chef
+# syntax=docker/dockerfile:1
+#
+# Build: Debian Bookworm (`chef`, planner, builder). Runtime: distroless `cc-debian13`
+# (pinned digest) plus X11/xcb shared libraries copied from Debian trixie (bookworm glibc
+# has no DSA for CVE-2026-0861; trixie libc is fixed per Debian security tracker). Bump
+# image digests deliberately when rotating bases.
 
-RUN apt-get update && apt-get -y --no-install-recommends install git build-essential m4 llvm libclang-dev diffutils curl cmake libglfw3-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev python3
-RUN cargo install cargo-chef 
-WORKDIR /aiblock
-ENV CARGO_TARGET_DIR=/aiblock
+# Rust toolchain + cargo-chef (pins avoid registry/toolchain breakage on older Rust releases).
+FROM rust:1.85-bookworm@sha256:e51d0265072d2d9d5d320f6a44dde6b9ef13653b035098febd68cce8fa7c0bc4 AS chef
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        git \
+        build-essential \
+        m4 \
+        llvm \
+        libclang-dev \
+        diffutils \
+        curl \
+        cmake \
+        libglfw3-dev \
+        libxrandr-dev \
+        libxinerama-dev \
+        libxcursor-dev \
+        libxi-dev \
+        python3 \
+    && rm -rf /var/lib/apt/lists/*
+# libglfw-dev + X11 dev headers: required by `glfw` / windowing in the workspace (vulkano miner path).
+
+RUN cargo install cargo-chef --version 0.1.72
+
+WORKDIR /lineage
+ENV CARGO_TARGET_DIR=/lineage
 
 FROM chef AS planner
-
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
-COPY --from=planner /aiblock/recipe.json /aiblock/recipe.json 
 
-ARG TARGETPLATFORM
-ARG BUILDPLATFORM
+COPY --from=planner /lineage/recipe.json /lineage/recipe.json
 
-RUN cargo chef cook --release --recipe-path /aiblock/recipe.json
+RUN cargo chef cook --release --recipe-path /lineage/recipe.json
+
 COPY . .
-RUN cargo build --release
+RUN cargo build --release --bin node
 
-# Use distroless
-#FROM cgr.dev/chainguard/glibc-dynamic:latest
-#
-FROM rust:1.79.0-slim-bullseye
-RUN apt-get update && apt-get -y --no-install-recommends install libclang-dev libxinerama-dev
-USER nonroot
+# Runtime libs absent from distroless/cc (`ldd`-based list on Debian-built `node`).
+# Pulled via apt so transitive deps match distroless/cc-debian13 (trixie).
+FROM debian:trixie-slim@sha256:cedb1ef40439206b673ee8b33a46a03a0c9fa90bf3732f54704f99cb061d2c5a AS runtime-trixie-so
 
-# Set these in the environment to override [use once we have env vars available]
-ARG NODE_TYPE_ARG="mempool"
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libx11-6 \
+        libxcb1 \
+        libxau6 \
+        libxdmcp6 \
+        libbsd0 \
+        libmd0 \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG TARGETARCH
+RUN set -eu; \
+    gnu="$(case "$TARGETARCH" in amd64) echo x86_64-linux-gnu ;; arm64) echo aarch64-linux-gnu ;; *) echo >&2 "unsupported TARGETARCH=$TARGETARCH"; exit 1 ;; esac)"; \
+    mkdir -p "/dist/usr/lib/$gnu"; \
+    cp -a "/usr/lib/$gnu/libX11.so"* "/dist/usr/lib/$gnu/"; \
+    cp -a "/usr/lib/$gnu/libxcb.so"* "/dist/usr/lib/$gnu/"; \
+    cp -a "/usr/lib/$gnu/libXau.so"* "/dist/usr/lib/$gnu/"; \
+    cp -a "/usr/lib/$gnu/libXdmcp.so"* "/dist/usr/lib/$gnu/"; \
+    cp -a "/usr/lib/$gnu/libbsd.so"* "/dist/usr/lib/$gnu/"; \
+    cp -a "/usr/lib/$gnu/libmd.so"* "/dist/usr/lib/$gnu/"
+
+# distroless/cc-debian13 — immutable digest (fixed glibc vs bookworm for CVE-2026-0861 et al.).
+FROM gcr.io/distroless/cc-debian13@sha256:56aaf20ab2523a346a67c8e8f8e8dabe447447d0788b82284d14ad79cd5f93cc AS runner
+
+COPY --from=builder /lineage/release/node /lineage/lineage
+
+COPY --from=runtime-trixie-so /dist/usr/lib/ /usr/lib/
+
+COPY .docker/conf/node_settings.toml /etc/node_settings.toml
+COPY .docker/conf/tls_certificates.json /etc/tls_certificates.json
+COPY .docker/conf/initial_block.json /etc/initial_block.json
+COPY .docker/conf/api_config.json /etc/api_config.json
+COPY .docker/conf/initial_issuance.json /etc/initial_issuance.json
+COPY .docker/conf/mempool_miner_whitelist.json /etc/mempool_miner_whitelist.json
+
+ARG NODE_TYPE_ARG=mempool
 ENV NODE_TYPE=$NODE_TYPE_ARG
-ENV CONFIG="/etc/node_settings.toml"
-ENV TLS_CONFIG="/etc/tls_certificates.json"
-ENV INITIAL_BLOCK_CONFIG="/etc/initial_block.json"
-ENV API_CONFIG="/etc/api_config.json"
-ENV INITIAL_ISSUANCE="/etc/initial_issuance.json"
-ENV API_USE_TLS="0"
-ENV MEMPOOL_MINER_WHITELIST="/etc/mempool_miner_whitelist.json"
+ENV CONFIG=/etc/node_settings.toml
+ENV TLS_CONFIG=/etc/tls_certificates.json
+ENV INITIAL_BLOCK_CONFIG=/etc/initial_block.json
+ENV API_CONFIG=/etc/api_config.json
+ENV INITIAL_ISSUANCE=/etc/initial_issuance.json
+ENV API_USE_TLS=0
+ENV MEMPOOL_MINER_WHITELIST=/etc/mempool_miner_whitelist.json
 ENV RUST_LOG=info,debug
 
-# Copy node bin
-COPY --from=builder /aiblock/release/node /aiblock/aiblock
-#COPY --from=builder /usr/lib/x86_64-linux-gnu/libX11.so.6 /usr/lib/x86_64-linux-gnu/libX11.so.6
-#RUN cp  /aiblock/release/node /aiblock/aiblock
+USER nonroot:nonroot
 
-# Default config for the node
-COPY .docker/conf/* /etc/.
+WORKDIR /
 
-ENTRYPOINT ["/aiblock/aiblock"]
+ENTRYPOINT ["/lineage/lineage"]
 
-CMD [$NODE_TYPE]
-
-
+# Exec form — no shell; overrides with `docker run … storage` etc.
+CMD ["mempool"]

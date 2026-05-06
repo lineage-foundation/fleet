@@ -6,11 +6,12 @@ days                   = 9999
 prompt = no
 
 [req_distinguished_name]
-CN = AIBlock Root CA
+CN = Lineage Root CA
 
+# Self-signed root: omit AKI `issuer` (OpenSSL 3 rejects it with no issuing cert).
 [ v3_ca ]
 subjectKeyIdentifier=hash
-authorityKeyIdentifier=keyid:always,issuer
+authorityKeyIdentifier=keyid:always
 basicConstraints = critical,CA:true
 
 [ v3_intermediate_ca ]

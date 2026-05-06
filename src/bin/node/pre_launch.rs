@@ -106,7 +106,8 @@ pub fn clap_app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn load_settings(matches: &clap::ArgMatches) -> config::Config {
-    let mut settings = config::Config::default();
+    use crate::config_load::{build, rebuild};
+
     let setting_file = matches
         .value_of("config")
         .unwrap_or("src/bin/node_settings.toml");
@@ -114,34 +115,32 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
         .value_of("tls_config")
         .unwrap_or("src/bin/tls_certificates.json");
 
-    settings.set_default("storage_node_idx", 0).unwrap();
-    settings.set_default("mempool_node_idx", 0).unwrap();
-
-    settings
-        .merge(config::File::with_name(setting_file))
-        .unwrap();
-    settings
-        .merge(config::File::with_name(tls_setting_file))
-        .unwrap();
+    let mut settings = build(|b| {
+        Ok(b.set_default("storage_node_idx", 0)?
+            .set_default("mempool_node_idx", 0)?
+            .add_source(config::File::with_name(setting_file))
+            .add_source(config::File::with_name(tls_setting_file)))
+    });
 
     if let Err(ConfigError::NotFound(_)) = settings.get_int("peer_limit") {
-        settings.set("peer_limit", 1000).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("peer_limit", 1000)?));
     }
 
     if let Some(index) = matches.value_of("index") {
-        settings.set("mempool_node_idx", index).unwrap();
-        let mut db_mode = settings.get_table("mempool_db_mode").unwrap();
-        if let Some(test_idx) = db_mode.get_mut("Test") {
+        let mut mempool_db_mode = settings.get_table("mempool_db_mode").unwrap();
+        if let Some(test_idx) = mempool_db_mode.get_mut("Test") {
             *test_idx = config::Value::new(None, index);
-            settings.set("mempool_db_mode", db_mode).unwrap();
         }
-
-        settings.set("storage_node_idx", index).unwrap();
-        let mut db_mode = settings.get_table("storage_db_mode").unwrap();
-        if let Some(test_idx) = db_mode.get_mut("Test") {
+        let mut storage_db_mode = settings.get_table("storage_db_mode").unwrap();
+        if let Some(test_idx) = storage_db_mode.get_mut("Test") {
             *test_idx = config::Value::new(None, index);
-            settings.set("storage_db_mode", db_mode).unwrap();
         }
+        settings = rebuild(settings, |b| {
+            Ok(b.set_override("mempool_node_idx", index)?
+                .set_override("mempool_db_mode", mempool_db_mode)?
+                .set_override("storage_node_idx", index)?
+                .set_override("storage_db_mode", storage_db_mode)?)
+        });
     }
 
     if let Some(key) = matches.value_of("tls_private_key_override") {
@@ -150,23 +149,19 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
             "pem_pkcs8_private_key_override".to_owned(),
             config::Value::new(None, key),
         );
-        settings.set("tls_config", tls_config).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("tls_config", tls_config)?));
     }
 
-    {
-        let node_type = match matches.value_of("type").unwrap() {
-            "mempool" => "Mempool",
-            "storage" => "Storage",
-            v => panic!("expect type mempool or storage: {}", v),
-        };
-        settings.set("node_type", node_type).unwrap();
-    }
-
-    settings
+    let node_type = match matches.value_of("type").unwrap() {
+        "mempool" => "Mempool",
+        "storage" => "Storage",
+        v => panic!("expect type mempool or storage: {}", v),
+    };
+    rebuild(settings, |b| Ok(b.set_override("node_type", node_type)?))
 }
 
 fn configuration(settings: config::Config) -> PreLaunchNodeConfig {
-    settings.try_into().unwrap()
+    settings.try_deserialize().unwrap()
 }
 
 #[cfg(test)]

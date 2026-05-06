@@ -1,55 +1,119 @@
-version: '3'
-services:
+# Local multi-node stack: mempool + storage + miner on bridge network `lineage`.
+#
+# If you change static `ipv4_address` below, mirror the addresses in `tls_certificates.json`
+# under `socket_name_mapping` (`src/bin/node_settings_gen_key_certs.sh` `emit_json` keeps them).
+#
+# Only bind-mount `node_settings.toml` from the host. All other configs use the
+# defaults baked into the image (`Dockerfile` copies `.docker/conf/*` → `/etc/`).
+#
+# Customize the settings file path:
+#   NODE_SETTINGS=/path/to/node_settings.toml docker compose up
+# Default repo file: `./.docker/conf/node_settings.toml`
+#
+# Requires: Docker Compose v2 / BuildKit. First build can take a long time.
+# Platform defaults to linux/amd64; native ARM: `export FLEET_COMPOSE_PLATFORM=linux/arm64`
+#
+# RocksDB writes under `src/db/db/...` → `/src` (WORKDIR `/`). `/src` uses a tmpfs-backed
+# named volume owned by distroless `nonroot` (65532) so reopen after restart is reliable.
+# After changing volume options, reset with: `docker compose down -v`
+#
+# If a service fails with filesystem permission errors under read-only root, extend `tmpfs`
+# or adjust volumes and document why.
 
-  mempool-node: &node-default
-    image: network
+x-node-build: &node-build
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: fleet-node:local
+  platform: ${FLEET_COMPOSE_PLATFORM:-linux/amd64}
+
+x-node-hardening: &node-hardening
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  init: true
+
+x-volumes-mempool: &volumes-mempool
+  - ${NODE_SETTINGS:-./.docker/conf/node_settings.toml}:/etc/node_settings.toml:ro
+  - mempool-node-src:/src
+
+x-volumes-storage: &volumes-storage
+  - ${NODE_SETTINGS:-./.docker/conf/node_settings.toml}:/etc/node_settings.toml:ro
+  - storage-node-src:/src
+
+x-volumes-miner: &volumes-miner
+  - ${NODE_SETTINGS:-./.docker/conf/node_settings.toml}:/etc/node_settings.toml:ro
+  - miner-node-src:/src
+
+services:
+  mempool-node:
+    <<: [*node-build, *node-hardening]
     environment:
       RUST_LOG: info,debug
-    privileged: false
-    user: "${UID}:${GID}"
-    init: true
-    ports: 
-      - '12300:12300'
-      - '3003:3003'
-    volumes:  
-      - /tmp/mempool:/src
-    command: mempool
-    platform: linux/amd64
-    networks:
-      aiblock:
-        ipv4_address: 172.28.0.3
-  
-  storage-node:
-    <<: *node-default
     ports:
-      - '12330:12330'
-      - '3001:3001'
-    volumes:
-      - /tmp/storage:/src
-    command: storage
+      - "12300:12300"
+      - "3003:3003"
+    volumes: *volumes-mempool
+    command: ["mempool"]
     networks:
-      aiblock:
+      lineage:
+        ipv4_address: 172.28.0.3
+
+  storage-node:
+    <<: [*node-build, *node-hardening]
+    environment:
+      RUST_LOG: info,debug
+    ports:
+      - "12330:12330"
+      - "3001:3001"
+    volumes: *volumes-storage
+    command: ["storage"]
+    networks:
+      lineage:
         ipv4_address: 172.28.0.2
 
   miner-node:
-    <<: *node-default
+    <<: [*node-build, *node-hardening]
     environment:
-      RUST_LOG: trace
-    depends_on: 
+      RUST_LOG: info,debug
+    depends_on:
       - mempool-node
       - storage-node
     ports:
-      - '12340:12340'
-      - '3004:3004'
-    volumes:  
-      - /tmp/miner:/src
-    command: miner
+      - "12340:12340"
+      - "3004:3004"
+    volumes: *volumes-miner
+    command: ["miner"]
     networks:
-      aiblock:
+      lineage:
         ipv4_address: 172.28.0.4
 
+volumes:
+  mempool-node-src:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=65532,gid=65532,mode=0755,size=2g
+  storage-node-src:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=65532,gid=65532,mode=0755,size=2g
+  miner-node-src:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=65532,gid=65532,mode=0755,size=2g
+
 networks:
-  aiblock:
+  lineage:
     driver: bridge
     ipam:
       config:
