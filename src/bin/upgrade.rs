@@ -159,16 +159,14 @@ fn clap_app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn load_settings(matches: &clap::ArgMatches) -> config::Config {
-    let mut settings = config::Config::default();
     let setting_file = matches
         .value_of("config")
         .unwrap_or("src/bin/node_settings.toml");
 
-    settings
-        .merge(config::File::with_name(setting_file))
-        .unwrap();
-
-    settings
+    config::Config::builder()
+        .add_source(config::File::with_name(setting_file))
+        .build()
+        .unwrap()
 }
 
 fn configuration(

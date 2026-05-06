@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
 #
-# Build: Debian Bookworm (`chef`, planner, builder). Runtime: distroless `cc-debian12`
-# (pinned digest) plus X11/xcb shared libraries copied from Debian bookworm. Bump image
-# digests deliberately when rotating bases.
+# Build: Debian Bookworm (`chef`, planner, builder). Runtime: distroless `cc-debian13`
+# (pinned digest) plus X11/xcb shared libraries copied from Debian trixie (bookworm glibc
+# has no DSA for CVE-2026-0861; trixie libc is fixed per Debian security tracker). Bump
+# image digests deliberately when rotating bases.
 
 # Rust toolchain + cargo-chef (pins avoid registry/toolchain breakage on older Rust releases).
 FROM rust:1.85-bookworm@sha256:e51d0265072d2d9d5d320f6a44dde6b9ef13653b035098febd68cce8fa7c0bc4 AS chef
@@ -44,9 +45,9 @@ RUN cargo chef cook --release --recipe-path /lineage/recipe.json
 COPY . .
 RUN cargo build --release --bin node
 
-# Runtime libs absent from distroless/cc (`ldd`-based list on bookworm-built `node`).
-# Pulled via apt so transitive deps stay consistent with bookworm.
-FROM debian:bookworm-slim@sha256:f9c6a2fd2ddbc23e336b6257a5245e31f996953ef06cd13a59fa0a1df2d5c252 AS runtime-bookworm-so
+# Runtime libs absent from distroless/cc (`ldd`-based list on Debian-built `node`).
+# Pulled via apt so transitive deps match distroless/cc-debian13 (trixie).
+FROM debian:trixie-slim@sha256:cedb1ef40439206b673ee8b33a46a03a0c9fa90bf3732f54704f99cb061d2c5a AS runtime-trixie-so
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -69,12 +70,12 @@ RUN set -eu; \
     cp -a "/usr/lib/$gnu/libbsd.so"* "/dist/usr/lib/$gnu/"; \
     cp -a "/usr/lib/$gnu/libmd.so"* "/dist/usr/lib/$gnu/"
 
-# distroless/cc-debian12 — immutable digest.
-FROM gcr.io/distroless/cc-debian12@sha256:e2d29aec8061843706b7e484c444f78fafb05bfe47745505252b1769a05d14f1 AS runner
+# distroless/cc-debian13 — immutable digest (fixed glibc vs bookworm for CVE-2026-0861 et al.).
+FROM gcr.io/distroless/cc-debian13@sha256:56aaf20ab2523a346a67c8e8f8e8dabe447447d0788b82284d14ad79cd5f93cc AS runner
 
 COPY --from=builder /lineage/release/node /lineage/lineage
 
-COPY --from=runtime-bookworm-so /dist/usr/lib/ /usr/lib/
+COPY --from=runtime-trixie-so /dist/usr/lib/ /usr/lib/
 
 COPY .docker/conf/node_settings.toml /etc/node_settings.toml
 COPY .docker/conf/tls_certificates.json /etc/tls_certificates.json

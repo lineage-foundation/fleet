@@ -88,7 +88,7 @@ Optional: rebuild one service (`docker compose build mempool-node`). Stop and re
 docker build -t fleet-node:local --platform linux/amd64 .
 ```
 
-The final stage runs as **`nonroot`**; the shipped binary is **`/lineage/lineage`** (distroless **`cc-debian12`**, digest-pinned, plus X11 runtime `.so` copied from Debian bookworm). Inspect `Dockerfile` for exact `FROM` digests after pull-through mirrors.
+The final stage runs as **`nonroot`**; the shipped binary is **`/lineage/lineage`** (distroless **`cc-debian13`**, digest-pinned, plus X11 runtime `.so` copied from **`debian:trixie-slim`** so glibc matches the distroless Debian 13 base). Inspect `Dockerfile` for exact `FROM` digests after pull-through mirrors.
 
 ---
 
@@ -97,8 +97,8 @@ The final stage runs as **`nonroot`**; the shipped binary is **`/lineage/lineage
 The root `Dockerfile` pins **immutable digests** for:
 
 - **`rust:X.Y-bookworm`** (chef / build stages; see `Dockerfile` for current `X.Y` and digest),
-- **`debian:bookworm-slim`** (temporary stage that installs X11 runtime `.so` files copied into the final image),
-- **`gcr.io/distroless/cc-debian12`** (runtime).
+- **`debian:trixie-slim`** (temporary stage that installs X11 runtime `.so` files copied into the final image; trixie so libraries match distroless Debian 13),
+- **`gcr.io/distroless/cc-debian13`** (runtime).
 
 Recommended flow:
 

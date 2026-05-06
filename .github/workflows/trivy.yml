@@ -55,6 +55,8 @@ jobs:
           scanners: vuln,misconfig
           trivyignores: .trivyignore
           skip-dirs: target,.git,run,tasks,src/db/db,src/wallet/wallet,src/bin/tls_data
+          # Same PEM-in-JSON fixtures as image; not exercised in current deployments.
+          skip-files: src/bin/tls_certificates.json,.docker/conf/tls_certificates.json
 
   trivy-image:
     name: Docker build + Trivy image
@@ -84,3 +86,5 @@ jobs:
           severity: ${{ env.TRIVY_SEVERITY }}
           exit-code: "1"
           trivyignores: .trivyignore
+          # PEM material in bundled JSON placeholder; TLS not used for this image path (see Dockerfile → /etc/tls_certificates.json).
+          skip-files: /etc/tls_certificates.json

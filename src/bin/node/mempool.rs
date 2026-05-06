@@ -211,7 +211,8 @@ pub fn clap_app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn load_settings(matches: &clap::ArgMatches) -> config::Config {
-    let mut settings = config::Config::default();
+    use crate::config_load::{build, rebuild};
+
     let setting_file = matches
         .value_of("config")
         .unwrap_or("src/bin/node_settings.toml");
@@ -231,90 +232,70 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
         .value_of("initial_issuance")
         .unwrap_or("src/bin/initial_issuance.json");
 
-    settings
-        .set_default("sanction_list", Vec::<String>::new())
-        .unwrap();
-    settings
-        .set_default("api_keys", Vec::<String>::new())
-        .unwrap();
-    settings.set_default("mempool_api_port", 3002).unwrap();
-    settings.set_default("mempool_api_use_tls", true).unwrap();
-
-    settings.set_default("jurisdiction", "US").unwrap();
-    settings.set_default("mempool_node_idx", 0).unwrap();
-    settings.set_default("mempool_raft", 0).unwrap();
-
-    settings.set_default("tx_status_lifetime", 600000).unwrap();
-
-    settings
-        .set_default("mempool_raft_tick_timeout", 10)
-        .unwrap();
-    settings
-        .set_default("mempool_transaction_timeout", 100)
-        .unwrap();
-    settings
-        .set_default("mempool_mining_event_timeout", 500)
-        .unwrap();
-    settings
-        .set_default("enable_pipeline_reset", false)
-        .unwrap();
-
-    settings
-        .merge(config::File::with_name(setting_file))
-        .unwrap();
-
-    settings
-        .merge(config::File::with_name(intial_block_setting_file))
-        .unwrap();
-    settings
-        .merge(config::File::with_name(initial_issuances))
-        .unwrap();
-    settings
-        .merge(config::File::with_name(tls_setting_file))
-        .unwrap();
-    settings
-        .merge(config::File::with_name(api_setting_file))
-        .unwrap();
-    settings
-        .merge(config::File::with_name(miner_white_list_file))
-        .unwrap();
+    let mut settings = build(|b| {
+        Ok(b.set_default("sanction_list", Vec::<String>::new())?
+            .set_default("api_keys", Vec::<String>::new())?
+            .set_default("mempool_api_port", 3002)?
+            .set_default("mempool_api_use_tls", true)?
+            .set_default("jurisdiction", "US")?
+            .set_default("mempool_node_idx", 0)?
+            .set_default("mempool_raft", 0)?
+            .set_default("tx_status_lifetime", 600000)?
+            .set_default("mempool_raft_tick_timeout", 10)?
+            .set_default("mempool_transaction_timeout", 100)?
+            .set_default("mempool_mining_event_timeout", 500)?
+            .set_default("enable_pipeline_reset", false)?
+            .add_source(config::File::with_name(setting_file))
+            .add_source(config::File::with_name(intial_block_setting_file))
+            .add_source(config::File::with_name(initial_issuances))
+            .add_source(config::File::with_name(tls_setting_file))
+            .add_source(config::File::with_name(api_setting_file))
+            .add_source(config::File::with_name(miner_white_list_file)))
+    });
 
     if let Some(tx_status_lifetime) = matches.value_of("tx_status_lifetime") {
-        settings
-            .set("tx_status_lifetime", tx_status_lifetime)
-            .unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("tx_status_lifetime", tx_status_lifetime)?));
     }
 
     if let Err(ConfigError::NotFound(_)) = settings.get_int("peer_limit") {
-        settings.set("peer_limit", 1000).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("peer_limit", 1000)?));
     }
 
     if let Err(ConfigError::NotFound(_)) = settings.get_int("sub_peer_limit") {
-        settings.set("sub_peer_limit", 1000).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("sub_peer_limit", 1000)?));
     }
 
     if let Some(port) = matches.value_of("api_port") {
-        settings.set("mempool_api_port", port).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("mempool_api_port", port)?));
     }
     if let Some(use_tls) = matches.value_of("api_use_tls") {
-        settings.set("mempool_api_use_tls", use_tls).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("mempool_api_use_tls", use_tls)?));
     }
     if let Some(enable_pipeline_reset) = matches.value_of("enable_pipeline_reset") {
-        settings
-            .set(
+        settings = rebuild(settings, |b| {
+            Ok(b.set_override(
                 "enable_trigger_messages_pipeline_reset",
                 enable_pipeline_reset,
-            )
-            .unwrap();
+            )?)
+        });
     }
 
     if let Some(index) = matches.value_of("index") {
-        settings.set("mempool_node_idx", index).unwrap();
         let mut db_mode = settings.get_table("mempool_db_mode").unwrap();
-        if let Some(test_idx) = db_mode.get_mut("Test") {
+        let update_db_mode = if let Some(test_idx) = db_mode.get_mut("Test") {
             *test_idx = config::Value::new(None, index);
-            settings.set("mempool_db_mode", db_mode).unwrap();
-        }
+            true
+        } else {
+            false
+        };
+        settings = if update_db_mode {
+            rebuild(settings, |b| {
+                Ok(b.set_override("mempool_node_idx", index)?
+                    .set_override("mempool_db_mode", db_mode)?)
+            })
+        } else {
+            rebuild(settings, |b| Ok(b.set_override("mempool_node_idx", index)?))
+        };
     }
 
     if let Some(key) = matches.value_of("tls_private_key_override") {
@@ -323,7 +304,7 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
             "pem_pkcs8_private_key_override".to_owned(),
             config::Value::new(None, key),
         );
-        settings.set("tls_config", tls_config).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("tls_config", tls_config)?));
     }
 
     settings

@@ -236,7 +236,8 @@ pub fn clap_app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn load_settings(matches: &clap::ArgMatches) -> config::Config {
-    let mut settings = config::Config::default();
+    use crate::config_load::{build, rebuild};
+    let mut settings;
     let mut node_index = 0;
     let setting_file = matches
         .value_of("config")
@@ -251,44 +252,28 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
         .value_of("api_config")
         .unwrap_or("src/bin/api_config.json");
 
-    settings
-        .set_default("api_keys", Vec::<String>::new())
-        .unwrap();
-    settings
-        .set_default("user_api_port", DEFAULT_USER_API_PORT)
-        .unwrap();
-    settings.set_default("user_api_use_tls", true).unwrap();
-    settings.set_default("user_mempool_node_idx", 0).unwrap();
-    settings.set_default("user_auto_donate", 0).unwrap();
-
-    settings
-        .set_default(
-            "user_test_auto_gen_setup",
-            default_user_test_auto_gen_setup(),
-        )
-        .unwrap();
-
-    settings
-        .merge(config::File::with_name(setting_file))
-        .unwrap();
-    settings
-        .merge(config::File::with_name(intial_block_setting_file))
-        .unwrap();
-    settings
-        .merge(config::File::with_name(tls_setting_file))
-        .unwrap();
-    settings
-        .merge(config::File::with_name(api_setting_file))
-        .unwrap();
+    settings = build(|b| {
+        Ok(b.set_default("api_keys", Vec::<String>::new())?
+            .set_default("user_api_port", DEFAULT_USER_API_PORT)?
+            .set_default("user_api_use_tls", true)?
+            .set_default("user_mempool_node_idx", 0)?
+            .set_default("user_auto_donate", 0)?
+            .set_default(
+                "user_test_auto_gen_setup",
+                default_user_test_auto_gen_setup(),
+            )?
+            .add_source(config::File::with_name(setting_file))
+            .add_source(config::File::with_name(intial_block_setting_file))
+            .add_source(config::File::with_name(tls_setting_file))
+            .add_source(config::File::with_name(api_setting_file)))
+    });
 
     if let Err(ConfigError::NotFound(_)) = settings.get_int("peer_limit") {
-        settings.set("peer_limit", DEFAULT_PEER_LIMIT).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("peer_limit", DEFAULT_PEER_LIMIT)?));
     }
 
-    // If index is passed, take note of the index to set address later
     if let Some(idx) = matches.value_of("index") {
         node_index = idx.parse::<usize>().unwrap();
-    // If index is not passed, lookout if 'address' is supplied
     } else if let Some(address) = matches.value_of("address") {
         let mut node = HashMap::new();
         node.insert("address".to_owned(), address.to_owned());
@@ -296,26 +281,19 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
         if let Ok(mut user_nodes) = settings.get_array("user_nodes") {
             let passed_addr_val = Value::new(None, node);
 
-            // Check if the address is already present in the toml
-            // if yes, take index from the toml
             node_index = if user_nodes.contains(&passed_addr_val) {
                 user_nodes
                     .iter()
                     .position(|r| r == &passed_addr_val)
                     .unwrap()
             } else {
-                // if no, consider the node to be a new entry
-                // hence the index will be the existing length + 1
-                // which is already adjusted in the `Vec::len()` method.
                 user_nodes.push(passed_addr_val);
                 user_nodes.len() - 1
             };
         }
-        settings.set("user_address", address).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("user_address", address)?));
     }
 
-    // Set node's address from the user_node's map if it is not supplied as an argument
-    // NOTE: Index will be defaulted to 0 if not updated in the above block
     if matches.value_of("address").is_none() {
         let user_nodes = settings
             .get_array("user_nodes")
@@ -323,7 +301,7 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
         let raw_map: &Value = user_nodes.get(node_index).unwrap();
         let map = raw_map.clone().into_table().unwrap();
         let addr = map.get("address").unwrap();
-        settings.set("user_address", addr.to_string()).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("user_address", addr.to_string())?));
     }
 
     let mut db_mode = settings.get_table("user_db_mode").unwrap();
@@ -334,14 +312,13 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
                 .try_deserialize::<usize>()
                 .expect("user_db_mode.Test must be usize-compatible");
         *test_idx = Value::new(None, index.to_string());
-        settings.set("user_db_mode", db_mode).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("user_db_mode", db_mode)?));
     }
 
-    // Select the user_wallet_seed according to the node_index
     if let Ok(user_wallet_seeds) = settings.get_array("user_wallet_seeds") {
-        settings
-            .set("user_wallet_seeds", user_wallet_seeds[node_index].clone())
-            .unwrap();
+        settings = rebuild(settings, |b| {
+            Ok(b.set_override("user_wallet_seeds", user_wallet_seeds[node_index].clone())?)
+        });
     }
 
     if let Some(certificate) = matches.value_of("tls_certificate_override") {
@@ -350,7 +327,7 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
             "pem_certificate_override".to_owned(),
             Value::new(None, certificate),
         );
-        settings.set("tls_config", tls_config).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("tls_config", tls_config)?));
     }
     if let Some(key) = matches.value_of("tls_private_key_override") {
         let mut tls_config = settings.get_table("tls_config").unwrap();
@@ -358,26 +335,26 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
             "pem_pkcs8_private_key_override".to_owned(),
             Value::new(None, key),
         );
-        settings.set("tls_config", tls_config).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("tls_config", tls_config)?));
     }
 
     if let Some(api_port) = matches.value_of("api_port") {
-        settings.set("user_api_port", api_port).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("user_api_port", api_port)?));
     }
 
     if let Some(index) = matches.value_of("mempool_index") {
-        settings.set("user_mempool_node_idx", index).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("user_mempool_node_idx", index)?));
     }
 
     if let Some(index) = matches.value_of("passphrase") {
-        settings.set("passphrase", index).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("passphrase", index)?));
     }
 
     if let Some(api_port) = matches.value_of("auto_donate") {
-        settings.set("user_auto_donate", api_port).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("user_auto_donate", api_port)?));
     }
     if let Some(use_tls) = matches.value_of("api_use_tls") {
-        settings.set("user_api_use_tls", use_tls).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("user_api_use_tls", use_tls)?));
     }
 
     settings

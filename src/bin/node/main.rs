@@ -3,6 +3,7 @@
 use clap::{App, ArgMatches};
 use tracing::info;
 
+pub(crate) mod config_load;
 mod mempool;
 mod miner;
 mod pre_launch;

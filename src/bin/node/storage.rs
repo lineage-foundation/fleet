@@ -173,7 +173,8 @@ pub fn clap_app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn load_settings(matches: &clap::ArgMatches) -> config::Config {
-    let mut settings = config::Config::default();
+    use crate::config_load::{build, rebuild};
+
     let setting_file = matches
         .value_of("config")
         .unwrap_or("src/bin/node_settings.toml");
@@ -184,49 +185,46 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
         .value_of("api_config")
         .unwrap_or("src/bin/api_config.json");
 
-    settings
-        .set_default("api_keys", Vec::<String>::new())
-        .unwrap();
-    settings.set_default("storage_node_idx", 0).unwrap();
-    settings.set_default("storage_raft", 0).unwrap();
-    settings.set_default("storage_api_port", 3001).unwrap();
-    settings.set_default("storage_api_use_tls", true).unwrap();
-
-    settings
-        .set_default("storage_raft_tick_timeout", 10)
-        .unwrap();
-    settings
-        .set_default("storage_catchup_duration", 1000)
-        .unwrap();
-
-    settings
-        .merge(config::File::with_name(setting_file))
-        .unwrap();
-    settings
-        .merge(config::File::with_name(tls_setting_file))
-        .unwrap();
-    settings
-        .merge(config::File::with_name(api_setting_file))
-        .unwrap();
+    let mut settings = build(|b| {
+        Ok(b.set_default("api_keys", Vec::<String>::new())?
+            .set_default("storage_node_idx", 0)?
+            .set_default("storage_raft", 0)?
+            .set_default("storage_api_port", 3001)?
+            .set_default("storage_api_use_tls", true)?
+            .set_default("storage_raft_tick_timeout", 10)?
+            .set_default("storage_catchup_duration", 1000)?
+            .add_source(config::File::with_name(setting_file))
+            .add_source(config::File::with_name(tls_setting_file))
+            .add_source(config::File::with_name(api_setting_file)))
+    });
 
     if let Err(ConfigError::NotFound(_)) = settings.get_int("peer_limit") {
-        settings.set("peer_limit", 1000).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("peer_limit", 1000)?));
     }
 
     if let Some(port) = matches.value_of("api_port") {
-        settings.set("storage_api_port", port).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("storage_api_port", port)?));
     }
     if let Some(use_tls) = matches.value_of("api_use_tls") {
-        settings.set("storage_api_use_tls", use_tls).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("storage_api_use_tls", use_tls)?));
     }
 
     if let Some(index) = matches.value_of("index") {
-        settings.set("storage_node_idx", index).unwrap();
         let mut db_mode = settings.get_table("storage_db_mode").unwrap();
-        if let Some(test_idx) = db_mode.get_mut("Test") {
+        let update_db_mode = if let Some(test_idx) = db_mode.get_mut("Test") {
             *test_idx = config::Value::new(None, index);
-            settings.set("storage_db_mode", db_mode).unwrap();
-        }
+            true
+        } else {
+            false
+        };
+        settings = if update_db_mode {
+            rebuild(settings, |b| {
+                Ok(b.set_override("storage_node_idx", index)?
+                    .set_override("storage_db_mode", db_mode)?)
+            })
+        } else {
+            rebuild(settings, |b| Ok(b.set_override("storage_node_idx", index)?))
+        };
     }
 
     if let Some(key) = matches.value_of("tls_private_key_override") {
@@ -235,7 +233,7 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
             "pem_pkcs8_private_key_override".to_owned(),
             config::Value::new(None, key),
         );
-        settings.set("tls_config", tls_config).unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("tls_config", tls_config)?));
     }
 
     settings
