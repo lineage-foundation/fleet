@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - "Dockerfile"
+      - ".dockerignore"
       - "docker-compose.yml"
       - ".docker/**"
       - ".github/workflows/trivy.yml"
@@ -16,6 +17,7 @@ on:
     branches: [main]
     paths:
       - "Dockerfile"
+      - ".dockerignore"
       - "docker-compose.yml"
       - ".docker/**"
       - ".github/workflows/trivy.yml"

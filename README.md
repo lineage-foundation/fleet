@@ -45,6 +45,10 @@ sudo apt-get update && sudo apt-get install -y \
 
 For day-to-day work: `cargo build --release`, `cargo test`, and IDE integration work as usual. **For a multi-node local stack, prefer Docker Compose** (next section)—it mirrors the hardened runtime and pinned base images CI uses.
 
+Native Linux builds are usually the fastest edit–compile loop; Compose pays an image-build cost first but matches CI’s bases and security posture. The root **`Dockerfile` expects [BuildKit](https://docs.docker.com/build/buildkit/)** so Cargo registry/git cache mounts apply—same behavior whether you use **`docker compose build`** or **`docker build`** ([details below](#building-only-the-container-image)).
+
+**Optional on Linux (native only):** faster linker **[mold](https://github.com/rui314/mold)**, shared compilation cache **[sccache](https://github.com/mozilla/sccache)**, or **[LLVM lld](https://lld.llvm.org/)**—optional quality-of-life; Docker image builds do not require them.
+
 ---
 
 ## Running with Docker Compose
@@ -70,6 +74,8 @@ docker compose build
 docker compose up
 ```
 
+`docker compose build` uses this repo’s root **`Dockerfile`**; enable **`DOCKER_BUILDKIT=1`** if your daemon still defaults to the legacy builder so Cargo cache mounts apply (see [Building only the container image](#building-only-the-container-image)).
+
 Customize the settings path:
 
 ```bash
@@ -84,9 +90,13 @@ Optional: rebuild one service (`docker compose build mempool-node`). Stop and re
 
 ## Building only the container image
 
+Enable **[BuildKit](https://docs.docker.com/build/buildkit/)** when building locally (`DOCKER_BUILDKIT=1`, default with Docker Desktop and modern Compose). The root **`Dockerfile` uses cache mounts** for Cargo registry/git downloads during **`cargo chef cook`** and **`cargo build`**, so repeat builds reuse crates faster across invocations.
+
 ```bash
-docker build -t fleet-node:local --platform linux/amd64 .
+DOCKER_BUILDKIT=1 docker build -t fleet-node:local --platform linux/amd64 .
 ```
+
+CI ([`.github/workflows/trivy.yml`](.github/workflows/trivy.yml)) builds the same **`Dockerfile`** with **BuildKit** via **docker/build-push-action** and **GitHub Actions cache** (`cache-from` / `cache-to`), so repeat pipeline runs reuse layers across commits. Locally, the Dockerfile’s **`RUN --mount=type=cache`** targets complement that when BuildKit is enabled.
 
 The final stage runs as **`nonroot`**; the shipped binary is **`/lineage/lineage`** (distroless **`cc-debian13`**, digest-pinned, plus X11 runtime `.so` copied from **`debian:trixie-slim`** so glibc matches the distroless Debian 13 base). Inspect `Dockerfile` for exact `FROM` digests after pull-through mirrors.
 

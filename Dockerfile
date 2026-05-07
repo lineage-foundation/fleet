@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1
 #
+# Requires Docker BuildKit (`DOCKER_BUILDKIT=1`): `RUN --mount=type=cache` reuses Cargo registry/git across builds.
+#
 # Build: Debian Bookworm (`chef`, planner, builder). Runtime: distroless `cc-debian13`
 # (pinned digest) plus X11/xcb shared libraries copied from Debian trixie (bookworm glibc
 # has no DSA for CVE-2026-0861; trixie libc is fixed per Debian security tracker). Bump
@@ -33,17 +35,25 @@ WORKDIR /lineage
 ENV CARGO_TARGET_DIR=/lineage
 
 FROM chef AS planner
-COPY . .
+# Minimal graph for `cargo chef prepare`; `.dockerignore` strips paths rustc does not need.
+COPY Cargo.toml Cargo.lock /lineage/
+COPY src /lineage/src
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 
 COPY --from=planner /lineage/recipe.json /lineage/recipe.json
 
-RUN cargo chef cook --release --recipe-path /lineage/recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    cargo chef cook --release --recipe-path /lineage/recipe.json
 
-COPY . .
-RUN cargo build --release --bin node
+COPY Cargo.toml Cargo.lock /lineage/
+COPY src /lineage/src
+# Keep flags/features aligned with `cargo chef cook` above (`--release`, default crate features).
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    cargo build --release --bin node
 
 # Runtime libs absent from distroless/cc (`ldd`-based list on Debian-built `node`).
 # Pulled via apt so transitive deps match distroless/cc-debian13 (trixie).

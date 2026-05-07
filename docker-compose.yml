@@ -10,7 +10,9 @@
 #   NODE_SETTINGS=/path/to/node_settings.toml docker compose up
 # Default repo file: `./.docker/conf/node_settings.toml`
 #
-# Requires: Docker Compose v2 / BuildKit. First build can take a long time.
+# Requires: Docker Compose v2 / BuildKit. The root Dockerfile uses BuildKit cache mounts for
+# Cargo registry/git; if builds ignore them, set DOCKER_BUILDKIT=1 (see README). First build
+# can take a long time.
 # Platform defaults to linux/amd64; native ARM: `export FLEET_COMPOSE_PLATFORM=linux/arm64`
 #
 # RocksDB writes under `src/db/db/...` → `/src` (WORKDIR `/`). `/src` uses a tmpfs-backed
