@@ -30,7 +30,6 @@ keccak_prime = "0.1.0"
 protobuf = "2.6.0"
 raft = { git = "https://github.com/ABlockOfficial/raft-rs", branch = "0.5.1" }
 rand = "0.7.3"
-regex = { version = "1.10", features = ["unicode-case"] }
 ring = "0.16.20"
 rocksdb = "0.21.0"
 rug = "1.7.0"
@@ -55,6 +54,10 @@ rustls-pemfile = "2.0.0"
 mock = []
 config_override = []
 benchmark_miners = []
+
+# Faster dev links on Linux and macOS (ignored on platforms that do not support it).
+[profile.dev]
+split-debuginfo = "unpacked"
 
 [workspace]
 resolver = "2"

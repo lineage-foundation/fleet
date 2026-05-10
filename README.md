@@ -45,7 +45,13 @@ sudo apt-get update && sudo apt-get install -y \
 
 For day-to-day work: `cargo build --release`, `cargo test`, and IDE integration work as usual. **For a multi-node local stack, prefer Docker Compose** (next section)—it mirrors the hardened runtime and pinned base images CI uses.
 
-Native Linux builds are usually the fastest edit–compile loop; Compose pays an image-build cost first but matches CI’s bases and security posture. The root **`Dockerfile` expects [BuildKit](https://docs.docker.com/build/buildkit/)** so Cargo registry/git cache mounts apply—same behavior whether you use **`docker compose build`** or **`docker build`** ([details below](#building-only-the-container-image)).
+### Linux-native vs Docker-centric workflows
+
+**Native (Linux or macOS host)** is usually the fastest edit–compile loop: Cargo reuses incremental artifacts, and you avoid image layer rebuilds. You install toolchain and system libraries yourself (see the Ubuntu package list above; other distros need equivalent GLFW/X11 and LLVM packages). The default build links the full miner stack, including OpenGL/Vulkan-related crates—expect extra native deps compared to a hypothetical CPU-only configuration.
+
+**Docker / Compose** pays a higher cold cost (image build, large contexts without cache) but reproduces CI’s pinned bases, distroless runtime, and Compose network layout. Most cache wins land on **dependency** and **toolchain** layers: enable **[BuildKit](https://docs.docker.com/build/buildkit/)** so the `Dockerfile` cache mounts apply (`DOCKER_BUILDKIT=1` or a modern Docker Desktop default). See [Building only the container image](#building-only-the-container-image) for details.
+
+The repo enables **`split-debuginfo = "unpacked"`** under `[profile.dev]` where supported for slightly faster dev links; you can add **`[profile.dev.package."*"]` → `opt-level = 1`** locally if you want faster debug binaries at the cost of longer dependency compiles.
 
 **Optional on Linux (native only):** faster linker **[mold](https://github.com/rui314/mold)**, shared compilation cache **[sccache](https://github.com/mozilla/sccache)**, or **[LLVM lld](https://lld.llvm.org/)**—optional quality-of-life; Docker image builds do not require them.
 
