@@ -754,6 +754,7 @@ dependencies = [
  "protobuf",
  "raft",
  "rand 0.7.3",
+ "regex",
  "ring 0.16.20",
  "rocksdb",
  "rug",
