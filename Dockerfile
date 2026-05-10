@@ -8,7 +8,7 @@
 # image digests deliberately when rotating bases.
 
 # Rust toolchain + cargo-chef (pins avoid registry/toolchain breakage on older Rust releases).
-FROM rust:1.85-bookworm@sha256:e51d0265072d2d9d5d320f6a44dde6b9ef13653b035098febd68cce8fa7c0bc4 AS chef
+FROM rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 AS chef
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -26,6 +26,9 @@ RUN apt-get update \
         libxcursor-dev \
         libxi-dev \
         python3 \
+        libgmp-dev \
+        libmpfr-dev \
+        libmpc-dev \
     && rm -rf /var/lib/apt/lists/*
 # libglfw-dev + X11 dev headers: required by `glfw` / windowing in the workspace (vulkano miner path).
 
