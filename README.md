@@ -26,7 +26,7 @@
 
 ## Developing from source
 
-Lineage Fleet is a Rust workspace. Install a recent toolchain via [rustup](https://rustup.rs), then clone this repository. On Linux you may need build dependencies similar to the `chef` stage in the root `Dockerfile` (LLVM/Clang, X11/Glfw headers, and related packages).
+Lineage Fleet is a Rust workspace. Install a recent toolchain via [rustup](https://rustup.rs), then clone this repository. On Linux you may need build dependencies similar to the `chef` stage in the root `Dockerfile` (LLVM/Clang, X11/GLFW headers, and related packages).
 
 ```bash
 curl https://sh.rustup.rs -sSf | sh
@@ -43,32 +43,42 @@ sudo apt-get update && sudo apt-get install -y \
   libxcursor-dev libxi-dev
 ```
 
-For day-to-day work: `cargo build --release`, `cargo test`, and IDE integration work as usual. **For a multi-node local stack, prefer Docker Compose** (next section)—it mirrors the hardened runtime and pinned base images CI uses.
+For day-to-day work, `cargo build --release`, `cargo test`, and IDE integration work as usual. For a multi-node local stack, prefer Docker Compose (next section); it mirrors the hardened runtime and pinned base images CI uses.
+
+### Native vs Docker workflows
+
+A native build (Linux or macOS host) is usually the fastest edit-compile loop: Cargo reuses incremental artifacts, and you avoid image layer rebuilds. You install the toolchain and system libraries yourself (see the Ubuntu package list above; other distros need equivalent GLFW/X11 and LLVM packages). The default build links the full miner stack, including OpenGL/Vulkan crates, so expect more native dependencies than a CPU-only configuration would need.
+
+Docker and Compose have a higher cold-start cost (image build, large contexts without cache) but reproduce CI's pinned bases, distroless runtime, and Compose network layout. Most of the caching benefit lands on the dependency and toolchain layers. Enable [BuildKit](https://docs.docker.com/build/buildkit/) so the `Dockerfile` cache mounts apply (`DOCKER_BUILDKIT=1`, or a recent Docker Desktop where it is the default). See [Building only the container image](#building-only-the-container-image) for details.
+
+The repo sets `split-debuginfo = "unpacked"` under `[profile.dev]` where supported, for slightly faster dev links. You can add `[profile.dev.package."*"]` with `opt-level = 1` locally if you want faster debug binaries at the cost of longer dependency compiles.
+
+On Linux you can optionally use a faster linker ([mold](https://github.com/rui314/mold)), a shared compilation cache ([sccache](https://github.com/mozilla/sccache)), or [LLVM lld](https://lld.llvm.org/). These are quality-of-life only; Docker image builds do not need them.
 
 ---
 
 ## Running with Docker Compose
 
-[`docker-compose.yml`](docker-compose.yml) runs **mempool**, **storage**, and **miner** on an isolated bridge network (`lineage`). The miner starts after mempool and storage via `depends_on`.
+[`docker-compose.yml`](docker-compose.yml) runs mempool, storage, and miner on an isolated bridge network (`lineage`). The miner starts after mempool and storage via `depends_on`.
 
-**Defaults**
+Defaults:
 
 | Item | Behaviour |
 |------|-----------|
 | Build | `fleet-node:local`, same `Dockerfile` as CI |
-| Platform | `linux/amd64` (`FLEET_COMPOSE_PLATFORM=linux/arm64` for Apple Silicon–native builds) |
+| Platform | `linux/amd64` (set `FLEET_COMPOSE_PLATFORM=linux/arm64` for native Apple Silicon builds) |
 | Writable DB | Per-service `/src` backed by a tmpfs named volume (`uid=65532`, distroless nonroot); reset with `docker compose down -v` after changing volumes |
-| Config | Only **one** bind mount from the host: `./.docker/conf/node_settings.toml` → `/etc/node_settings.toml` (override path with `NODE_SETTINGS`) |
+| Config | One bind mount from the host: `./.docker/conf/node_settings.toml` → `/etc/node_settings.toml` (override the path with `NODE_SETTINGS`) |
 | Hardening | `read_only: true`, `/tmp` tmpfs, `cap_drop: [ALL]`, `no-new-privileges` |
 
-**Quick start**
-
-From the repo root:
+Quick start, from the repo root:
 
 ```bash
 docker compose build
 docker compose up
 ```
+
+`docker compose build` uses this repo's root `Dockerfile`. If your daemon still defaults to the legacy builder, set `DOCKER_BUILDKIT=1` so the Cargo cache mounts apply (see [Building only the container image](#building-only-the-container-image)).
 
 Customize the settings path:
 
@@ -76,53 +86,57 @@ Customize the settings path:
 NODE_SETTINGS=/absolute/path/to/node_settings.toml docker compose up
 ```
 
-The first image build downloads toolchains and compiles everything; subsequent runs are faster. Published ports match the bundled example settings (`3003` mempool API, `3001` storage, etc.—see Compose `ports:`).
+The first image build downloads toolchains and compiles everything; later runs are faster. Published ports match the bundled example settings (`3003` mempool API, `3001` storage, and so on; see the Compose `ports:` entries).
 
-Optional: rebuild one service (`docker compose build mempool-node`). Stop and remove volumes: `docker compose down -v`.
+To rebuild a single service: `docker compose build mempool-node`. To stop and remove volumes: `docker compose down -v`.
 
 ---
 
 ## Building only the container image
 
+Enable [BuildKit](https://docs.docker.com/build/buildkit/) when building locally (`DOCKER_BUILDKIT=1`, the default with Docker Desktop and modern Compose). The root `Dockerfile` uses cache mounts for Cargo registry/git downloads during `cargo chef cook` and `cargo build`, so repeat builds reuse crates across invocations.
+
 ```bash
-docker build -t fleet-node:local --platform linux/amd64 .
+DOCKER_BUILDKIT=1 docker build -t fleet-node:local --platform linux/amd64 .
 ```
 
-The final stage runs as **`nonroot`**; the shipped binary is **`/lineage/lineage`** (distroless **`cc-debian13`**, digest-pinned, plus X11 runtime `.so` copied from **`debian:trixie-slim`** so glibc matches the distroless Debian 13 base). Inspect `Dockerfile` for exact `FROM` digests after pull-through mirrors.
+CI ([`.github/workflows/trivy.yml`](.github/workflows/trivy.yml)) builds the same `Dockerfile` with BuildKit via `docker/build-push-action` and the GitHub Actions cache (`cache-from` / `cache-to`), so repeat pipeline runs reuse layers across commits. Locally, the Dockerfile's `RUN --mount=type=cache` targets complement that when BuildKit is enabled.
+
+The final stage runs as `nonroot`, and the shipped binary is `/lineage/lineage` (distroless `cc-debian13`, digest-pinned, plus X11 runtime `.so` files copied from `debian:trixie-slim` so glibc matches the distroless Debian 13 base). See the `Dockerfile` for the exact `FROM` digests.
 
 ---
 
 ## Bumping pinned base images
 
-The root `Dockerfile` pins **immutable digests** for:
+The root `Dockerfile` pins immutable digests for:
 
-- **`rust:X.Y-bookworm`** (chef / build stages; see `Dockerfile` for current `X.Y` and digest),
-- **`debian:trixie-slim`** (temporary stage that installs X11 runtime `.so` files copied into the final image; trixie so libraries match distroless Debian 13),
-- **`gcr.io/distroless/cc-debian13`** (runtime).
+- `rust:X.Y-bookworm` (chef and build stages; see `Dockerfile` for the current `X.Y` and digest),
+- `debian:trixie-slim` (a temporary stage that installs the X11 runtime `.so` files copied into the final image; trixie so the libraries match distroless Debian 13),
+- `gcr.io/distroless/cc-debian13` (runtime).
 
-Recommended flow:
+Suggested flow:
 
-1. Choose the **Rust toolchain** revision you want (`rust:X.Y-bookworm`), matching Cargo / lockfile constraints.
-2. Pull candidate images; copy the SHA256 digest from your registry mirror or vendor docs (`docker manifest inspect …` or your cloud console).
-3. Update each `FROM …@sha256:…` in `Dockerfile` in one atomic commit.
-4. Re-run `docker build --platform linux/amd64 …` locally and let **CI Trivy** pass on CRITICAL/HIGH.
-5. If `cargo-chef` fails after a toolchain jump, bump the pinned `cargo install cargo-chef --version …` line only if absolutely required—record why in the commit message.
+1. Choose the Rust toolchain revision you want (`rust:X.Y-bookworm`), matching Cargo and lockfile constraints.
+2. Pull candidate images and copy the SHA256 digest from your registry mirror or vendor docs (`docker manifest inspect ...`, or your cloud console).
+3. Update each `FROM ...@sha256:...` in `Dockerfile` in one atomic commit.
+4. Re-run `docker build --platform linux/amd64 ...` locally and let CI Trivy pass on CRITICAL/HIGH.
+5. If `cargo-chef` breaks after a toolchain jump, bump the pinned `cargo install cargo-chef --version ...` line only if you have to, and record why in the commit message.
 
-Owner / merge policy: bumps are normal maintenance PRs; default reviewer same as infra or core Rust changes—align with team practice.
+Bumps are normal maintenance PRs; use the same reviewers as other infra or core Rust changes.
 
 ---
 
 ## Git flow
 
-Base new work on an up-to-date **`main`** (fetch and merge or rebase from `origin/main` as your team prefers). Open pull requests to **`main`** per [CONTRIBUTING.md](CONTRIBUTING.md).
+Base new work on an up-to-date `main` (fetch and rebase or merge from `origin/main`, whichever your team prefers). Open pull requests against `main` per [CONTRIBUTING.md](CONTRIBUTING.md).
 
-**Commit messages** follow the [Conventional Commits](https://www.conventionalcommits.org/) specification:
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/):
 
-- Use a type and optional scope: `type(scope): short summary` (imperative mood: *add*, *fix*, not *added*). Common types include `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`, and `perf`.
-- Mark breaking changes with `!` after the type/scope (e.g. `feat(api)!: …`) and/or a `BREAKING CHANGE:` paragraph in the commit body, per the spec.
-- Keep the first line within ~72 characters; put detail in the body when needed.
+- Use a type and optional scope: `type(scope): short summary`, in the imperative mood (*add*, *fix*, not *added*). Common types are `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`, and `perf`.
+- Mark breaking changes with `!` after the type/scope (for example `feat(api)!: ...`) and/or a `BREAKING CHANGE:` paragraph in the body.
+- Keep the first line within about 72 characters, and put detail in the body when needed.
 
-Branch names are up to your team; what matters for history and releases is consistent **Conventional Commits** on `main`.
+Branch names are up to you; what matters for history and releases is consistent Conventional Commits on `main`.
 
 ---
 
@@ -130,18 +144,18 @@ Branch names are up to your team; what matters for history and releases is consi
 
 Workflow [`.github/workflows/trivy.yml`](.github/workflows/trivy.yml) runs:
 
-- **`trivy fs`** — vulnerabilities + misconfiguration on the repository (respects [.trivyignore](.trivyignore))
-- **`trivy image`** — vulnerabilities on the freshly built **`fleet-node:ci`** image
+- `trivy fs` for vulnerabilities and misconfiguration on the repository (respects [.trivyignore](.trivyignore)),
+- `trivy image` for vulnerabilities on the freshly built `fleet-node:ci` image.
 
-Pull requests touching `Dockerfile`, Compose, Cargo, `.docker/`, `.trivyignore`, or the workflow itself gate on **severity `CRITICAL` and `HIGH`** (see workflow `env.TRIVY_SEVERITY`).
+Pull requests that touch `Dockerfile`, Compose, Cargo, `.docker/`, `.trivyignore`, or the workflow itself gate on severity `CRITICAL` and `HIGH` (see `env.TRIVY_SEVERITY` in the workflow).
 
 ### Handling policy exceptions
 
-Trivy misconfiguration hits include rules such as Dockerfile `FROM …` pinning. Exceptions belong in [.trivyignore](.trivyignore) **only as stable AVD IDs** with one-line rationale. Look up IDs on [AVD Aquasec](https://avd.aquasec.com/) (`avd-ds-0001` → `AVD-DS-0001`).
+Trivy misconfiguration hits include rules such as Dockerfile `FROM ...` pinning. Exceptions belong in [.trivyignore](.trivyignore), only as stable AVD IDs with a one-line rationale. Look up IDs on [Aqua AVD](https://avd.aquasec.com/) (`avd-ds-0001` becomes `AVD-DS-0001`).
 
-Example excerpt (today’s allowances—re-validate whenever `Dockerfile` changes):
+Example excerpt (current allowances; re-validate whenever `Dockerfile` changes):
 
-**.trivyignore**
+`.trivyignore`:
 
 ```
 # Exceptions must map to an https://avd.aquasec.com/ AVD ID and a one-line justification.
@@ -151,7 +165,7 @@ AVD-DS-0001
 AVD-DS-0026
 ```
 
-Do **not** add blanket ignores without an AVD and owner review.
+Do not add blanket ignores without an AVD ID and owner review.
 
 ## Links
 
@@ -164,4 +178,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-GPL-3.0 — see [LICENSE](LICENSE). This project continues the open-source Network lineage under the same license.
+GPL-3.0, see [LICENSE](LICENSE). This project continues the open-source Network lineage under the same license.

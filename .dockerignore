@@ -1,7 +1,29 @@
+# SCM / CI metadata — not used by `rustc`
+.git/
+.github/
+
 /.idea/
 /.vscode/
+/.cursor/
 
-/assets/
+# Compose / container orchestration (not compile inputs)
+docker-compose.yml
+Dockerfile
+
+# Docs and licensing — changing these must not bust the `chef cook` / `cargo build` layers
+README.md
+CONTRIBUTING.md
+LICENSE
+Makefile
+.editorconfig
+.trivyignore
+
+# Repo tooling / samples outside `src/`
+cnf/
+genesis_utxo/
+assets/
+.hooks/
+
 /run/
 /src/bin/tls_data/
 /src/db/db/
