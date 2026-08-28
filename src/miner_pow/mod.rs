@@ -1,5 +1,7 @@
 pub mod cpu;
+#[cfg(feature = "gpu")]
 pub mod opengl;
+#[cfg(feature = "gpu")]
 pub mod vulkan;
 
 use crate::asert::{CompactTarget, CompactTargetError};
@@ -11,9 +13,13 @@ use std::fmt;
 use std::fmt::Debug;
 use std::ops::RangeInclusive;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
+#[cfg(feature = "gpu")]
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
+#[cfg(feature = "gpu")]
+use tracing::warn;
 use tw_chain::primitives::block::BlockHeader;
 
 pub const SHA3_256_BYTES: usize = 32;
@@ -548,6 +554,7 @@ pub fn generate_pow<O: PoWObject>(
     Ok(MineResult::Exhausted)
 }
 
+#[cfg(feature = "gpu")]
 static OPENGL_ERRORED: OnceLock<()> = OnceLock::new();
 
 /// Creates a miner.
@@ -569,23 +576,26 @@ pub fn create_any_miner(difficulty: Option<&PoWDifficulty>) -> Arc<Mutex<dyn Sha
         }
     }
 
-    match vulkan::VulkanMiner::get() {
-        Ok(miner) => return miner.clone(),
-        Err(cause) => warn!("Failed to create Vulkan miner: {cause}"),
-    };
-
-    if OPENGL_ERRORED.get().is_none() {
-        // Previous attempts to create an OpenGL miner have succeeded, or we haven't tried yet
-        match opengl::OpenGlMiner::new() {
-            Ok(miner) => return Arc::new(Mutex::new(miner)),
-            Err(cause) => {
-                warn!("Failed to create OpenGL miner: {cause}");
-
-                // Remember that OpenGL miner creation failed, so we don't keep trying over and over
-                // on subsequent attempts.
-                OPENGL_ERRORED.get_or_init(|| ());
-            }
+    #[cfg(feature = "gpu")]
+    {
+        match vulkan::VulkanMiner::get() {
+            Ok(miner) => return miner.clone(),
+            Err(cause) => warn!("Failed to create Vulkan miner: {cause}"),
         };
+
+        if OPENGL_ERRORED.get().is_none() {
+            // Previous attempts to create an OpenGL miner have succeeded, or we haven't tried yet
+            match opengl::OpenGlMiner::new() {
+                Ok(miner) => return Arc::new(Mutex::new(miner)),
+                Err(cause) => {
+                    warn!("Failed to create OpenGL miner: {cause}");
+
+                    // Remember that OpenGL miner creation failed, so we don't keep trying over and over
+                    // on subsequent attempts.
+                    OPENGL_ERRORED.get_or_init(|| ());
+                }
+            };
+        }
     }
 
     Arc::new(Mutex::new(CpuMiner::new()))
@@ -595,7 +605,9 @@ pub fn create_any_miner(difficulty: Option<&PoWDifficulty>) -> Arc<Mutex<dyn Sha
 pub(super) mod test {
     use super::*;
     use crate::miner_pow::cpu::CpuMiner;
+    #[cfg(feature = "gpu")]
     use crate::miner_pow::opengl::OpenGlMiner;
+    #[cfg(feature = "gpu")]
     use crate::miner_pow::vulkan::VulkanMiner;
 
     #[derive(Copy, Clone, Debug)]
@@ -823,6 +835,7 @@ pub(super) mod test {
         }
     }
 
+    #[cfg(feature = "gpu")]
     #[test]
     fn verify_opengl() {
         let mut miner = OpenGlMiner::new().unwrap();
@@ -831,6 +844,7 @@ pub(super) mod test {
         }
     }
 
+    #[cfg(feature = "gpu")]
     #[test]
     fn verify_vulkan() {
         let miner = VulkanMiner::get().unwrap();
