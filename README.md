@@ -47,7 +47,7 @@ For day-to-day work, `cargo build --release`, `cargo test`, and IDE integration 
 
 ### Native vs Docker workflows
 
-A native build (Linux or macOS host) is usually the fastest edit-compile loop: Cargo reuses incremental artifacts, and you avoid image layer rebuilds. You install the toolchain and system libraries yourself (see the Ubuntu package list above; other distros need equivalent GLFW/X11 and LLVM packages). The default build links the full miner stack, including OpenGL/Vulkan crates, so expect more native dependencies than a CPU-only configuration would need.
+A native build (Linux or macOS host) is usually the fastest edit-compile loop: Cargo reuses incremental artifacts, and you avoid image layer rebuilds. You install the toolchain and system libraries yourself (see the Ubuntu package list above; other distros need equivalent GLFW/X11 and LLVM packages). The GPU miner backends (Vulkan/OpenGL) are behind an off-by-default `gpu` Cargo feature, so a plain `cargo build` is CPU-only and does not need the Vulkan/OpenGL/GLFW crates or their X11 system libraries. Build the miner with GPU acceleration via `cargo build --release --features gpu`; the Docker image already does this.
 
 Docker and Compose have a higher cold-start cost (image build, large contexts without cache) but reproduce CI's pinned bases, distroless runtime, and Compose network layout. Most of the caching benefit lands on the dependency and toolchain layers. Enable [BuildKit](https://docs.docker.com/build/buildkit/) so the `Dockerfile` cache mounts apply (`DOCKER_BUILDKIT=1`, or a recent Docker Desktop where it is the default). See [Building only the container image](#building-only-the-container-image) for details.
 
