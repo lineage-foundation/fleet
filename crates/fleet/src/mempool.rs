@@ -1,15 +1,15 @@
 use crate::block_pipeline::{MiningPipelineItem, MiningPipelineStatus, Participants};
-use crate::comms_handler::{CommsError, Event, Node, TcpTlsConfig};
+use crate::comms_handler::{Event, Node, TcpTlsConfig};
 use crate::configurations::{
     ExtraNodeParams, MempoolNodeConfig, MempoolNodeSharedConfig, TlsPrivateInfo,
 };
 use crate::constants::{DB_PATH, RESEND_TRIGGER_MESSAGES_COMPUTE_LIMIT};
-use crate::db_utils::{self, SimpleDb, SimpleDbError, SimpleDbSpec};
+use crate::db_utils::{self, SimpleDb, SimpleDbSpec};
 use crate::interfaces::{
     BlockStoredInfo, CommonBlockInfo, Contract, DruidDroplet, DruidPool, InitialIssuance,
-    MempoolApi, MempoolApiRequest, MempoolInterface, MempoolRequest, MineRequest, MinedBlock,
-    MinedBlockExtraInfo, NodeType, PowInfo, ProofOfWork, Response, StorageRequest, TxStatus,
-    TxStatusType, UserRequest, UtxoFetchType, UtxoSet, WinningPoWInfo,
+    MempoolApi, MempoolApiRequest, MempoolError, MempoolInterface, MempoolRequest, MineRequest,
+    MinedBlock, MinedBlockExtraInfo, NodeType, PowInfo, ProofOfWork, Response, StorageRequest,
+    TxStatus, TxStatusType, UserRequest, UtxoFetchType, UtxoSet, WinningPoWInfo,
 };
 use crate::mempool_raft::{
     CommittedItem, CoordinatedCommand, MempoolConsensusedRuntimeData, MempoolRaft,
@@ -31,13 +31,10 @@ use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::{
-    error::Error,
-    fmt,
     future::Future,
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
 use tokio::sync::RwLock;
-use tokio::task;
 use tracing::{debug, error, error_span, info, trace, warn};
 use tracing_futures::Instrument;
 use tw_chain::primitives::asset::TokenAmount;
@@ -66,72 +63,6 @@ pub const DB_SPEC: SimpleDbSpec = SimpleDbSpec {
 
 /// Result wrapper for mempool errors
 pub type Result<T> = std::result::Result<T, MempoolError>;
-
-#[derive(Debug)]
-pub enum MempoolError {
-    ConfigError(&'static str),
-    Network(CommsError),
-    DbError(SimpleDbError),
-    Serialization(bincode::Error),
-    AsyncTask(task::JoinError),
-    GenericError(StringError),
-}
-
-impl fmt::Display for MempoolError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ConfigError(err) => write!(f, "Config error: {err}"),
-            Self::Network(err) => write!(f, "Network error: {err}"),
-            Self::DbError(err) => write!(f, "DB error: {err}"),
-            Self::AsyncTask(err) => write!(f, "Async task error: {err}"),
-            Self::Serialization(err) => write!(f, "Serialization error: {err}"),
-            Self::GenericError(err) => write!(f, "Generic error: {err}"),
-        }
-    }
-}
-
-impl Error for MempoolError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::ConfigError(_) => None,
-            Self::Network(ref e) => Some(e),
-            Self::DbError(ref e) => Some(e),
-            Self::AsyncTask(ref e) => Some(e),
-            Self::Serialization(ref e) => Some(e),
-            Self::GenericError(ref e) => Some(e),
-        }
-    }
-}
-
-impl From<CommsError> for MempoolError {
-    fn from(other: CommsError) -> Self {
-        Self::Network(other)
-    }
-}
-
-impl From<SimpleDbError> for MempoolError {
-    fn from(other: SimpleDbError) -> Self {
-        Self::DbError(other)
-    }
-}
-
-impl From<bincode::Error> for MempoolError {
-    fn from(other: bincode::Error) -> Self {
-        Self::Serialization(other)
-    }
-}
-
-impl From<task::JoinError> for MempoolError {
-    fn from(other: task::JoinError) -> Self {
-        Self::AsyncTask(other)
-    }
-}
-
-impl From<StringError> for MempoolError {
-    fn from(other: StringError) -> Self {
-        Self::GenericError(other)
-    }
-}
 
 #[derive(Debug)]
 pub struct MempoolNode {
