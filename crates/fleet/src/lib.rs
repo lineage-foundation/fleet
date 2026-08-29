@@ -7,7 +7,7 @@ mod api;
 mod mempool;
 mod mempool_raft;
 mod miner;
-pub mod node_params;
+pub use fleet_node_common as node_params;
 mod pre_launch;
 mod storage;
 mod storage_fetch;
