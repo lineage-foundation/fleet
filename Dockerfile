@@ -83,8 +83,9 @@ RUN set -eu; \
     cp -a "/usr/lib/$gnu/libbsd.so"* "/dist/usr/lib/$gnu/"; \
     cp -a "/usr/lib/$gnu/libmd.so"* "/dist/usr/lib/$gnu/"
 
-# distroless/cc-debian13 — immutable digest (fixed glibc vs bookworm for CVE-2026-0861 et al.).
-FROM gcr.io/distroless/cc-debian13@sha256:56aaf20ab2523a346a67c8e8f8e8dabe447447d0788b82284d14ad79cd5f93cc AS runner
+# distroless/cc-debian13 — immutable digest (fixed glibc vs bookworm; refreshed to Debian 13.6
+# to clear libssl3t64 CVE-2026-14456 and CVE-2026-45447).
+FROM gcr.io/distroless/cc-debian13@sha256:9b615fff20e1a4fad29c2b30562580b212c7dd5e2225236735cca0070ed11c78 AS runner
 
 COPY --from=builder /lineage/release/node /lineage/lineage
 
