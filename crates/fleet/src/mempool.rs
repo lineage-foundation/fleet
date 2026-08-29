@@ -1,8 +1,6 @@
 use crate::block_pipeline::{MiningPipelineItem, MiningPipelineStatus, Participants};
 use crate::comms_handler::{Event, Node, TcpTlsConfig};
-use crate::configurations::{
-    ExtraNodeParams, MempoolNodeConfig, MempoolNodeSharedConfig, TlsPrivateInfo,
-};
+use crate::configurations::{MempoolNodeConfig, MempoolNodeSharedConfig, TlsPrivateInfo};
 use crate::constants::{DB_PATH, RESEND_TRIGGER_MESSAGES_COMPUTE_LIMIT};
 use crate::db_utils::{self, SimpleDb, SimpleDbSpec};
 use crate::interfaces::{
@@ -13,6 +11,7 @@ use crate::interfaces::{
     UtxoFetchType, UtxoSet, WinningPoWInfo,
 };
 use crate::mempool_raft::{CommittedItem, CoordinatedCommand, MempoolRaft, MempoolRuntimeItem};
+use crate::node_params::ExtraNodeParams;
 use crate::raft::RaftCommit;
 use crate::threaded_call::{ThreadedCallChannel, ThreadedCallSender};
 use crate::tracked_utxo::TrackedUtxoSet;

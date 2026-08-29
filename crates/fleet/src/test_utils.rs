@@ -4,14 +4,15 @@
 
 use crate::comms_handler::{test_tls_certificates, Node, TcpTlsConfig, TcpTlsListner};
 use crate::configurations::{
-    DbMode, ExtraNodeParams, MempoolNodeConfig, MinerNodeConfig, MinerWhitelist, NodeSpec,
-    PreLaunchNodeConfig, PreLaunchNodeType, StorageNodeConfig, TlsSpec, UserAutoGenTxSetup,
-    UserNodeConfig, UtxoSetSpec, WalletTxSpec,
+    DbMode, MempoolNodeConfig, MinerNodeConfig, MinerWhitelist, NodeSpec, PreLaunchNodeConfig,
+    PreLaunchNodeType, StorageNodeConfig, TlsSpec, UserAutoGenTxSetup, UserNodeConfig,
+    UtxoSetSpec, WalletTxSpec,
 };
 use crate::constants::{DB_PATH, DB_PATH_TEST, WALLET_PATH};
 use crate::interfaces::{InitialIssuance, Response};
 use crate::mempool::MempoolNode;
 use crate::miner::MinerNode;
+use crate::node_params::ExtraNodeParams;
 use crate::pre_launch::PreLaunchNode;
 use crate::storage::StorageNode;
 use crate::upgrade::{

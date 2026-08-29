@@ -1,7 +1,5 @@
 // use crate::comms_handler::Node;
-use crate::db_utils::{CustomDbSpec, SimpleDb};
 use crate::interfaces::InitialIssuance;
-use crate::wallet::WalletDb;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
@@ -336,17 +334,6 @@ pub struct UserAutoGenTxSetup {
     pub user_setup_tx_in_per_tx: Option<usize>,
     /// How many Txin to have for that user at each round
     pub user_setup_tx_max_count: usize,
-}
-
-/// Extra params for Node construction
-#[derive(Default)]
-pub struct ExtraNodeParams {
-    pub db: Option<SimpleDb>,
-    pub raft_db: Option<SimpleDb>,
-    pub wallet_db: Option<SimpleDb>,
-    pub shared_wallet_db: Option<WalletDb>,
-    pub custom_wallet_spec: Option<CustomDbSpec>,
-    pub disable_tcp_listener: bool,
 }
 
 ///Hacky deserializer to work around deserializatio error with u128

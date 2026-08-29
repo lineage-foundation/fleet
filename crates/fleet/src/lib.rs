@@ -18,6 +18,7 @@ mod mempool;
 mod mempool_raft;
 mod miner;
 mod miner_pow;
+pub mod node_params;
 mod pre_launch;
 mod raft;
 mod raft_store;

@@ -4,12 +4,13 @@ use super::{
     upgrade_mempool_db, upgrade_storage_db, upgrade_wallet_db, UpgradeCfg, UpgradeError,
     UpgradeStatus,
 };
-use crate::configurations::{DbMode, ExtraNodeParams, UserAutoGenTxSetup, WalletTxSpec};
+use crate::configurations::{DbMode, UserAutoGenTxSetup, WalletTxSpec};
 use crate::constants::{LAST_BLOCK_HASH_KEY, NETWORK_VERSION_SERIALIZED};
 use crate::db_utils::{
     new_db, new_db_with_version, SimpleDb, SimpleDbError, SimpleDbSpec, DB_COL_DEFAULT,
 };
 use crate::interfaces::{BlockStoredInfo, BlockchainItem, BlockchainItemMeta, Response};
+use crate::node_params::ExtraNodeParams;
 use crate::test_utils::{
     get_test_tls_spec, node_join_all_checked, remove_all_node_dbs, Network, NetworkConfig,
     NetworkNodeInfo, NodeType,

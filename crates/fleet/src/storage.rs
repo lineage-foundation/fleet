@@ -1,5 +1,5 @@
 use crate::comms_handler::{CommsError, Event, Node, TcpTlsConfig};
-use crate::configurations::{ExtraNodeParams, StorageNodeConfig, TlsPrivateInfo};
+use crate::configurations::{StorageNodeConfig, TlsPrivateInfo};
 use crate::constants::{
     DB_PATH, INDEXED_BLOCK_HASH_PREFIX_KEY, INDEXED_TX_HASH_PREFIX_KEY, LAST_BLOCK_HASH_KEY,
     NAMED_CONSTANT_PREPEND,
@@ -10,6 +10,7 @@ use crate::interfaces::{
     MineRequest, MinedBlock, NodeType, ProofOfWork, Response, StorageInterface, StorageRequest,
     StoredSerializingBlock,
 };
+use crate::node_params::ExtraNodeParams;
 use crate::raft::RaftCommit;
 use crate::storage_fetch::{FetchStatus, FetchedBlockChain, StorageFetch};
 use crate::storage_raft::{CommittedItem, CompleteBlock, StorageRaft};

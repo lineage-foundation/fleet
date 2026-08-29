@@ -1,9 +1,8 @@
 use crate::comms_handler::{CommsError, Event, Node, TcpTlsConfig};
-use crate::configurations::{
-    DbMode, ExtraNodeParams, PreLaunchNodeConfig, PreLaunchNodeType, TlsSpec,
-};
+use crate::configurations::{DbMode, PreLaunchNodeConfig, PreLaunchNodeType, TlsSpec};
 use crate::db_utils::{self, SimpleDb, SimpleDbSpec};
 use crate::interfaces::{DbItem, NodeType, PreLaunchRequest, Response};
+use crate::node_params::ExtraNodeParams;
 use crate::raft_store::{get_presistent_committed, CommittedIndex};
 use crate::utils::{
     create_socket_addr_for_list, LocalEvent, LocalEventChannel, LocalEventSender, ResponseResult,

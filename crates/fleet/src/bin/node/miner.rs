@@ -1,6 +1,7 @@
 //! App to run a mining node.
 
-use fleet::configurations::{ExtraNodeParams, MinerNodeConfig, UserNodeConfig};
+use fleet::configurations::{MinerNodeConfig, UserNodeConfig};
+use fleet::node_params::ExtraNodeParams;
 use fleet::{
     loop_wait_connnect_to_peers_async, loops_re_connect_disconnect, routes, shutdown_connections,
     ResponseResult,

@@ -1,9 +1,10 @@
 use crate::comms_handler::{CommsError, Event, Node, TcpTlsConfig};
-use crate::configurations::{ExtraNodeParams, TlsPrivateInfo, UserAutoGenTxSetup, UserNodeConfig};
+use crate::configurations::{TlsPrivateInfo, UserAutoGenTxSetup, UserNodeConfig};
 use crate::interfaces::{
     MempoolRequest, NodeType, PaymentResponse, RbPaymentData, RbPaymentRequestData,
     RbPaymentResponseData, Response, UserApi, UserApiRequest, UserRequest, UtxoFetchType, UtxoSet,
 };
+use crate::node_params::ExtraNodeParams;
 use crate::threaded_call::{ThreadedCallChannel, ThreadedCallSender};
 use crate::transaction_gen::{PendingMap, TransactionGen};
 use crate::transactor::Transactor;
