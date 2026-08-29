@@ -1,4 +1,4 @@
-use crate::wallet::LockedCoinbase;
+use crate::LockedCoinbase;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tracing::{debug, warn};

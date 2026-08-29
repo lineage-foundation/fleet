@@ -18,7 +18,7 @@ build-tests/
 *.*~
 .DS_Store
 crates/fleet/src/db/db/
-crates/fleet/src/wallet/wallet/
+crates/fleet-wallet/src/wallet/
 /*.log
 crates/fleet/src/bin/tls_data/
 

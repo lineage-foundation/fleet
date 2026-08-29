@@ -27,6 +27,6 @@ assets/
 /run/
 /crates/fleet/src/bin/tls_data/
 /crates/fleet/src/db/db/
-/crates/fleet/src/wallet/wallet/
+/crates/fleet-wallet/src/wallet/
 /target/
 *.log

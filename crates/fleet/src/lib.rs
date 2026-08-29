@@ -21,7 +21,7 @@ pub mod transaction_gen;
 pub mod transactor;
 pub mod upgrade;
 mod user;
-pub mod wallet;
+pub use fleet_wallet as wallet;
 
 pub use fleet_core::{
     active_raft, asert, block_pipeline, bounded_hash_set, comms_handler, configurations,
@@ -46,7 +46,7 @@ pub use fleet_core::{
     loop_connnect_to_peers_async, loop_wait_connnect_to_peers_async,
     loops_re_connect_disconnect, shutdown_connections, ResponseResult,
 };
-pub use wallet::WalletDb;
+pub use fleet_wallet::WalletDb;
 
 #[cfg(not(feature = "mock"))]
 pub use crate::comms_handler::Node;
