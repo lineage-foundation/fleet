@@ -1,10 +1,9 @@
 // use crate::comms_handler::Node;
 use crate::db_utils::{CustomDbSpec, SimpleDb};
 use crate::interfaces::InitialIssuance;
-use crate::mempool_raft::MinerWhitelist;
 use crate::wallet::WalletDb;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::net::SocketAddr;
 use tw_chain::primitives::asset::TokenAmount;
@@ -97,6 +96,13 @@ pub enum DbMode {
 #[derive(Debug, Clone, Deserialize)]
 pub struct NodeSpec {
     pub address: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct MinerWhitelist {
+    pub active: bool,
+    pub miner_api_keys: Option<HashSet<String>>,
+    pub miner_addresses: Option<HashSet<SocketAddr>>,
 }
 
 /// Configuration option for a mempool node

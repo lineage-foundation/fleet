@@ -5,7 +5,7 @@ use crate::block_pipeline::{
     MiningPipelineItem, MiningPipelinePhaseChange, MiningPipelineStatus, Participants,
     PipelineEventInfo,
 };
-use crate::configurations::{MempoolNodeConfig, UnicornFixedInfo};
+use crate::configurations::{MempoolNodeConfig, MinerWhitelist, UnicornFixedInfo};
 use crate::constants::{BLOCK_SIZE_IN_TX, COINBASE_MATURITY, DB_PATH, TX_POOL_LIMIT};
 use crate::db_utils::{self, SimpleDb, SimpleDbError, SimpleDbSpec};
 use crate::interfaces::{BlockStoredInfo, InitialIssuance, UtxoSet, WinningPoWInfo};
@@ -48,13 +48,6 @@ pub enum CoordinatedCommand {
     #[default]
     ResumeNodes,
     ApplySharedConfig,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct MinerWhitelist {
-    pub active: bool,
-    pub miner_api_keys: Option<HashSet<String>>,
-    pub miner_addresses: Option<HashSet<SocketAddr>>,
 }
 
 /// Item serialized into RaftData and process by Raft.
