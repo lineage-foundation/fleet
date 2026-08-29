@@ -17,10 +17,10 @@ build-tests/
 **/*.rs.bk
 *.*~
 .DS_Store
-src/db/db/
-src/wallet/wallet/
+crates/fleet/src/db/db/
+crates/fleet/src/wallet/wallet/
 /*.log
-src/bin/tls_data/
+crates/fleet/src/bin/tls_data/
 
 *.txt
 
