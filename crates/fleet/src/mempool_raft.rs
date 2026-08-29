@@ -8,7 +8,9 @@ use crate::block_pipeline::{
 use crate::configurations::{MempoolNodeConfig, MinerWhitelist, UnicornFixedInfo};
 use crate::constants::{BLOCK_SIZE_IN_TX, COINBASE_MATURITY, DB_PATH, TX_POOL_LIMIT};
 use crate::db_utils::{self, SimpleDb, SimpleDbError, SimpleDbSpec};
-use crate::interfaces::{BlockStoredInfo, InitialIssuance, UtxoSet, WinningPoWInfo};
+use crate::interfaces::{
+    BlockStoredInfo, InitialIssuance, MempoolConsensusedRuntimeData, UtxoSet, WinningPoWInfo,
+};
 use crate::raft::{RaftCommit, RaftCommitData, RaftData, RaftMessageWrapper};
 use crate::raft_util::{RaftContextKey, RaftInFlightProposals};
 use crate::tracked_utxo::TrackedUtxoSet;
@@ -126,12 +128,6 @@ pub enum InitialProposal {
         item: MempoolRaftItem,
         dedup_b_num: Option<u64>,
     },
-}
-
-/// Runtime data that is shared amongst mempool peers, but will not persist to disk
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct MempoolConsensusedRuntimeData {
-    pub mining_api_keys: BTreeMap<SocketAddr, String>,
 }
 
 /// This is a dirty patch to enable the import of consensus snapshots

@@ -7,14 +7,12 @@ use crate::constants::{DB_PATH, RESEND_TRIGGER_MESSAGES_COMPUTE_LIMIT};
 use crate::db_utils::{self, SimpleDb, SimpleDbSpec};
 use crate::interfaces::{
     BlockStoredInfo, CommonBlockInfo, Contract, DruidDroplet, DruidPool, InitialIssuance,
-    MempoolApi, MempoolApiRequest, MempoolError, MempoolInterface, MempoolRequest, MineRequest,
-    MinedBlock, MinedBlockExtraInfo, NodeType, PowInfo, ProofOfWork, Response, StorageRequest,
-    TxStatus, TxStatusType, UserRequest, UtxoFetchType, UtxoSet, WinningPoWInfo,
+    MempoolApi, MempoolApiRequest, MempoolConsensusedRuntimeData, MempoolError,
+    MempoolInterface, MempoolRequest, MineRequest, MinedBlock, MinedBlockExtraInfo, NodeType,
+    PowInfo, ProofOfWork, Response, StorageRequest, TxStatus, TxStatusType, UserRequest,
+    UtxoFetchType, UtxoSet, WinningPoWInfo,
 };
-use crate::mempool_raft::{
-    CommittedItem, CoordinatedCommand, MempoolConsensusedRuntimeData, MempoolRaft,
-    MempoolRuntimeItem,
-};
+use crate::mempool_raft::{CommittedItem, CoordinatedCommand, MempoolRaft, MempoolRuntimeItem};
 use crate::raft::RaftCommit;
 use crate::threaded_call::{ThreadedCallChannel, ThreadedCallSender};
 use crate::tracked_utxo::TrackedUtxoSet;

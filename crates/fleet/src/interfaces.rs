@@ -1,7 +1,6 @@
 use crate::comms_handler::CommsError;
 use crate::configurations::MempoolNodeSharedConfig;
 use crate::db_utils::SimpleDbError;
-use crate::mempool_raft::MempoolConsensusedRuntimeData;
 use crate::raft::{CommittedIndex, RaftMessageWrapper};
 use crate::tracked_utxo::TrackedUtxoSet;
 use crate::unicorn::Unicorn;
@@ -687,6 +686,12 @@ pub enum MempoolApiRequest {
     SendSharedConfig {
         shared_config: MempoolNodeSharedConfig,
     },
+}
+
+/// Runtime data that is shared amongst mempool peers, but will not persist to disk
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MempoolConsensusedRuntimeData {
+    pub mining_api_keys: BTreeMap<SocketAddr, String>,
 }
 
 /// Encapsulates mempool requests & responses.
