@@ -4,8 +4,9 @@ use crate::configurations::{MinerNodeConfig, TlsPrivateInfo};
 use crate::constants::INTERNAL_TX_LIMIT;
 use crate::db_utils;
 use crate::interfaces::{
-    BlockchainItem, MempoolRequest, MineApiRequest, MineRequest, MinerInterface, NodeType, PowInfo,
-    ProofOfWork, Response, Rs2JsMsg, StorageRequest, UtxoFetchType, UtxoSet,
+    BlockPoWReceived, BlockchainItem, CurrentBlockWithMutex, MempoolRequest, MineApiRequest,
+    MineRequest, MinerInterface, NodeType, PowInfo, ProofOfWork, Response, Rs2JsMsg,
+    StorageRequest, UtxoFetchType, UtxoSet,
 };
 use crate::node_params::ExtraNodeParams;
 use crate::threaded_call::{ThreadedCallChannel, ThreadedCallSender};
@@ -21,7 +22,7 @@ use crate::wallet::{LockedCoinbase, WalletDb, WalletDbError, DB_SPEC};
 use async_trait::async_trait;
 use bincode::{deserialize, serialize};
 use bytes::Bytes;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::{
@@ -54,11 +55,6 @@ pub const MINING_ADDRESS_KEY: &str = "MiningAddressKey";
 /// Result wrapper for miner errors
 pub type Result<T> = std::result::Result<T, MinerError>;
 
-/// Wrapper for current block
-///
-/// TODO: Circumvent using a Mutex just for API purposes.
-pub type CurrentBlockWithMutex = Arc<Mutex<Option<BlockPoWReceived>>>;
-
 /// Block Pow task input/output
 #[derive(Debug, Clone)]
 pub struct BlockPoWInfo {
@@ -66,13 +62,6 @@ pub struct BlockPoWInfo {
     start_time: SystemTime,
     header: BlockHeader,
     coinbase: Transaction,
-}
-
-/// Received block
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct BlockPoWReceived {
-    block: BlockHeader,
-    reward: TokenAmount,
 }
 
 #[derive(Debug)]

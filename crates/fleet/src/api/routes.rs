@@ -6,8 +6,7 @@ use crate::api::utils::{
 use crate::comms_handler::Node;
 use crate::constants::API_CONCURRENCY_LIMIT;
 use crate::db_utils::SimpleDb;
-use crate::interfaces::{MempoolApi, UserApi};
-use crate::miner::CurrentBlockWithMutex;
+use crate::interfaces::{CurrentBlockWithMutex, MempoolApi, UserApi};
 use crate::threaded_call::ThreadedCallSender;
 use crate::utils::{ApiKeys, RoutesPoWInfo};
 use crate::wallet::WalletDb;

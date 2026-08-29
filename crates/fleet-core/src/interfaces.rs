@@ -12,6 +12,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::task;
 use tw_chain::primitives::asset::Asset;
 use tw_chain::primitives::asset::TokenAmount;
@@ -480,6 +482,20 @@ pub trait StorageInterface {
 }
 
 ///============ MINER NODE ============///
+
+/// Wrapper for current block
+///
+/// TODO: Circumvent using a Mutex just for API purposes.
+pub type CurrentBlockWithMutex = Arc<Mutex<Option<BlockPoWReceived>>>;
+
+/// Received block
+// NOTE: `block`/`reward` are `pub` (rather than private-to-module, as before the hoist
+// from `fleet::miner`) so that `fleet::miner` can construct/read this cross-crate.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BlockPoWReceived {
+    pub block: BlockHeader,
+    pub reward: TokenAmount,
+}
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Deserialize, Serialize, Clone)]

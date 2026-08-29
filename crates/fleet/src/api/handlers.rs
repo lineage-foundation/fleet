@@ -9,12 +9,11 @@ use crate::configurations::MempoolNodeSharedConfig;
 use crate::constants::LAST_BLOCK_HASH_KEY;
 use crate::db_utils::SimpleDb;
 use crate::interfaces::{
-    node_type_as_str, AddressesWithOutPoints, BlockchainItem, BlockchainItemMeta,
-    BlockchainItemType, DebugData, DruidPool, MempoolApi, MempoolError, MineApiRequest,
-    MineRequest, NodeType, OutPointData, StoredSerializingBlock, UserApi, UserApiRequest,
-    UserRequest, UtxoFetchType,
+    node_type_as_str, AddressesWithOutPoints, BlockPoWReceived, BlockchainItem,
+    BlockchainItemMeta, BlockchainItemType, CurrentBlockWithMutex, DebugData, DruidPool,
+    MempoolApi, MempoolError, MineApiRequest, MineRequest, NodeType, OutPointData,
+    StoredSerializingBlock, UserApi, UserApiRequest, UserRequest, UtxoFetchType,
 };
-use crate::miner::{BlockPoWReceived, CurrentBlockWithMutex};
 use crate::storage::{get_stored_value_from_db, indexed_block_hash_key};
 use crate::threaded_call::{self, ThreadedCallSender};
 use crate::utils::{decode_pub_key, decode_signature, StringError};
