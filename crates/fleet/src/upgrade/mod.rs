@@ -9,7 +9,7 @@ mod tests;
 #[rustfmt::skip]
 mod tests_last_version_db;
 
-use crate::configurations::{DbMode, ExtraNodeParams, UnicornFixedInfo};
+use crate::configurations::{DbMode, UnicornFixedInfo};
 use crate::constants::{
     BLOCK_PREPEND, DB_PATH, DB_VERSION_KEY, FUND_KEY, NETWORK_VERSION_SERIALIZED, TX_PREPEND,
     WALLET_PATH,
@@ -19,6 +19,7 @@ use crate::db_utils::{
     SimpleDbWriteBatch, DB_COL_DEFAULT,
 };
 use crate::miner::LAST_COINBASE_KEY;
+use crate::node_params::ExtraNodeParams;
 use crate::utils::StringError;
 use crate::{mempool, mempool_raft, raft_store, storage, storage_raft, user, wallet};
 use bincode::{deserialize, serialize};

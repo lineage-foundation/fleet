@@ -10,10 +10,10 @@ use crate::constants::LAST_BLOCK_HASH_KEY;
 use crate::db_utils::SimpleDb;
 use crate::interfaces::{
     node_type_as_str, AddressesWithOutPoints, BlockchainItem, BlockchainItemMeta,
-    BlockchainItemType, DebugData, DruidPool, MempoolApi, MineApiRequest, MineRequest, NodeType,
-    OutPointData, StoredSerializingBlock, UserApi, UserApiRequest, UserRequest, UtxoFetchType,
+    BlockchainItemType, DebugData, DruidPool, MempoolApi, MempoolError, MineApiRequest,
+    MineRequest, NodeType, OutPointData, StoredSerializingBlock, UserApi, UserApiRequest,
+    UserRequest, UtxoFetchType,
 };
-use crate::mempool::MempoolError;
 use crate::miner::{BlockPoWReceived, CurrentBlockWithMutex};
 use crate::storage::{get_stored_value_from_db, indexed_block_hash_key};
 use crate::threaded_call::{self, ThreadedCallSender};

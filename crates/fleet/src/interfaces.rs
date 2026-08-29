@@ -1,16 +1,18 @@
+use crate::comms_handler::CommsError;
 use crate::configurations::MempoolNodeSharedConfig;
-use crate::mempool::MempoolError;
-use crate::mempool_raft::MempoolConsensusedRuntimeData;
+use crate::db_utils::SimpleDbError;
 use crate::raft::{CommittedIndex, RaftMessageWrapper};
 use crate::tracked_utxo::TrackedUtxoSet;
 use crate::unicorn::Unicorn;
-use crate::utils::rug_integer;
+use crate::utils::{rug_integer, StringError};
 use bytes::Bytes;
 use rug::Integer;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::error::Error;
 use std::fmt;
 use std::net::SocketAddr;
+use tokio::task;
 use tw_chain::primitives::asset::Asset;
 use tw_chain::primitives::asset::TokenAmount;
 use tw_chain::primitives::block::{Block, BlockHeader};
@@ -596,6 +598,72 @@ pub enum Rs2JsMsg {
 
 ///============ MEMPOOL NODE ============///
 
+#[derive(Debug)]
+pub enum MempoolError {
+    ConfigError(&'static str),
+    Network(CommsError),
+    DbError(SimpleDbError),
+    Serialization(bincode::Error),
+    AsyncTask(task::JoinError),
+    GenericError(StringError),
+}
+
+impl fmt::Display for MempoolError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ConfigError(err) => write!(f, "Config error: {err}"),
+            Self::Network(err) => write!(f, "Network error: {err}"),
+            Self::DbError(err) => write!(f, "DB error: {err}"),
+            Self::AsyncTask(err) => write!(f, "Async task error: {err}"),
+            Self::Serialization(err) => write!(f, "Serialization error: {err}"),
+            Self::GenericError(err) => write!(f, "Generic error: {err}"),
+        }
+    }
+}
+
+impl Error for MempoolError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::ConfigError(_) => None,
+            Self::Network(ref e) => Some(e),
+            Self::DbError(ref e) => Some(e),
+            Self::AsyncTask(ref e) => Some(e),
+            Self::Serialization(ref e) => Some(e),
+            Self::GenericError(ref e) => Some(e),
+        }
+    }
+}
+
+impl From<CommsError> for MempoolError {
+    fn from(other: CommsError) -> Self {
+        Self::Network(other)
+    }
+}
+
+impl From<SimpleDbError> for MempoolError {
+    fn from(other: SimpleDbError) -> Self {
+        Self::DbError(other)
+    }
+}
+
+impl From<bincode::Error> for MempoolError {
+    fn from(other: bincode::Error) -> Self {
+        Self::Serialization(other)
+    }
+}
+
+impl From<task::JoinError> for MempoolError {
+    fn from(other: task::JoinError) -> Self {
+        Self::AsyncTask(other)
+    }
+}
+
+impl From<StringError> for MempoolError {
+    fn from(other: StringError) -> Self {
+        Self::GenericError(other)
+    }
+}
+
 // Encapsulates mempool requests injected by API
 #[allow(clippy::enum_variant_names)]
 #[derive(Deserialize, Serialize, Clone)]
@@ -618,6 +686,12 @@ pub enum MempoolApiRequest {
     SendSharedConfig {
         shared_config: MempoolNodeSharedConfig,
     },
+}
+
+/// Runtime data that is shared amongst mempool peers, but will not persist to disk
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MempoolConsensusedRuntimeData {
+    pub mining_api_keys: BTreeMap<SocketAddr, String>,
 }
 
 /// Encapsulates mempool requests & responses.

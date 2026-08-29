@@ -18,6 +18,7 @@ mod mempool;
 mod mempool_raft;
 mod miner;
 mod miner_pow;
+pub mod node_params;
 mod pre_launch;
 mod raft;
 mod raft_store;
@@ -25,6 +26,7 @@ mod raft_util;
 mod storage;
 mod storage_fetch;
 mod storage_raft;
+pub mod test_support;
 #[cfg(test)]
 mod test_utils;
 #[cfg(test)]
@@ -49,10 +51,11 @@ pub use pre_launch::PreLaunchNode;
 pub use storage::StorageNode;
 pub use transaction_gen::TransactionGen;
 pub use user::UserNode;
+pub use test_support::create_and_save_fake_to_wallet;
 pub use utils::LocalEvent;
 pub use utils::{
-    create_and_save_fake_to_wallet, create_valid_transaction, get_sanction_addresses,
-    get_test_common_unicorn, loop_connnect_to_peers_async, loop_wait_connnect_to_peers_async,
+    create_valid_transaction, get_sanction_addresses, get_test_common_unicorn,
+    loop_connnect_to_peers_async, loop_wait_connnect_to_peers_async,
     loops_re_connect_disconnect, shutdown_connections, ResponseResult,
 };
 pub use wallet::WalletDb;

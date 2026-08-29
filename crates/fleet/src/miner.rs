@@ -1,12 +1,13 @@
 use crate::comms_handler::Node;
 use crate::comms_handler::{CommsError, Event, TcpTlsConfig};
-use crate::configurations::{ExtraNodeParams, MinerNodeConfig, TlsPrivateInfo};
+use crate::configurations::{MinerNodeConfig, TlsPrivateInfo};
 use crate::constants::INTERNAL_TX_LIMIT;
 use crate::db_utils;
 use crate::interfaces::{
     BlockchainItem, MempoolRequest, MineApiRequest, MineRequest, MinerInterface, NodeType, PowInfo,
     ProofOfWork, Response, Rs2JsMsg, StorageRequest, UtxoFetchType, UtxoSet,
 };
+use crate::node_params::ExtraNodeParams;
 use crate::threaded_call::{ThreadedCallChannel, ThreadedCallSender};
 use crate::transactor::Transactor;
 use crate::utils::{
