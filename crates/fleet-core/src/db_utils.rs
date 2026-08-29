@@ -1,12 +1,17 @@
 use crate::configurations::DbMode;
 use crate::constants::{
-    DB_PATH_LIVE, DB_PATH_TEST, DB_VERSION_KEY, NETWORK_VERSION_SERIALIZED, OLD_BACKUP_COUNT,
+    DB_COLS_BC, DB_COL_BC_ALL, DB_COL_BC_JSON, DB_COL_BC_META, DB_COL_BC_NAMED, DB_PATH_LIVE,
+    DB_PATH_TEST, DB_POINTER_SEPARATOR, DB_VERSION_KEY, INDEXED_BLOCK_HASH_PREFIX_KEY,
+    NAMED_CONSTANT_PREPEND, NETWORK_VERSION_SERIALIZED, OLD_BACKUP_COUNT,
 };
+use crate::interfaces::{BlockchainItem, BlockchainItemMeta};
+use bincode::deserialize;
 use rocksdb::backup::{BackupEngine, BackupEngineOptions};
 use rocksdb::Env;
 use rocksdb::{DBCompressionType, IteratorMode, Options, WriteBatch, DB};
 pub use rocksdb::{Error as DBError, DEFAULT_COLUMN_FAMILY_NAME as DB_COL_DEFAULT};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::sync::{Arc, Mutex};
 use std::{error::Error, fmt};
 use tracing::{debug, warn};
 
@@ -691,4 +696,72 @@ pub fn restore_file_backup(
     }
 
     Ok(())
+}
+
+/// Get the stored value at the given key
+///
+/// ### Arguments
+///
+/// * `key` - Given key to find the value.
+pub fn get_stored_value_from_db<K: AsRef<[u8]>>(
+    db: Arc<Mutex<SimpleDb>>,
+    key: K,
+) -> Option<BlockchainItem> {
+    let col_all = if key.as_ref().first() == Some(&NAMED_CONSTANT_PREPEND) {
+        DB_COL_BC_NAMED
+    } else {
+        DB_COL_BC_ALL
+    };
+    let u_db = db.lock().unwrap();
+    let pointer = ok_or_warn(u_db.get_cf(col_all, key), "get_stored_value pointer")?;
+
+    let (version, cf, key) = decode_version_pointer(&pointer);
+    let data = ok_or_warn(u_db.get_cf(cf, key), "get_stored_value data")?;
+    let data_json = ok_or_warn(
+        u_db.get_cf(DB_COL_BC_JSON, key),
+        "get_stored_value data_json",
+    )?;
+    let meta = {
+        let meta = u_db.get_cf(DB_COL_BC_META, key);
+        let meta = ok_or_warn(meta, "get_stored_value meta")?;
+        let meta = deserialize::<BlockchainItemMeta>(&meta).map(Some);
+        ok_or_warn(meta, "get_stored_value meta ser")?
+    };
+    Some(BlockchainItem {
+        version,
+        item_meta: meta,
+        key: key.to_owned(),
+        data,
+        data_json,
+    })
+}
+
+/// The key for indexed block
+///
+/// ### Arguments
+///
+/// * `b_num`  - The block number
+pub fn indexed_block_hash_key(b_num: u64) -> String {
+    format!("{INDEXED_BLOCK_HASH_PREFIX_KEY}{b_num:016x}")
+}
+
+/// Decodes a version pointer
+///
+/// ### Arguments
+///
+/// * `pointer`    - String to be split and decoded
+pub fn decode_version_pointer(pointer: &[u8]) -> (u32, &'static str, &[u8]) {
+    let mut it = pointer.split(|c| c == &DB_POINTER_SEPARATOR);
+    let cf = it.next().unwrap();
+    let (cf, version) = DB_COLS_BC.iter().find(|(v, _)| v.as_bytes() == cf).unwrap();
+    let key = it.next().unwrap();
+    (*version, cf, key)
+}
+
+/// Return an option, emiting a warning for errors converted to
+fn ok_or_warn<V, E: fmt::Display>(r: std::result::Result<Option<V>, E>, tag: &str) -> Option<V> {
+    r.unwrap_or_else(|e| {
+        warn!("{}: {}", tag, e);
+        None
+    })
 }

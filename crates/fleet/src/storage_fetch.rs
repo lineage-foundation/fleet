@@ -1,6 +1,7 @@
 use crate::configurations::StorageNodeConfig;
+use crate::db_utils::indexed_block_hash_key;
 use crate::interfaces::{BlockchainItem, BlockchainItemMeta};
-use crate::storage::{indexed_block_hash_key, indexed_tx_hash_key};
+use crate::storage::indexed_tx_hash_key;
 use crate::utils::create_socket_addr;
 use std::fmt;
 use std::net::SocketAddr;

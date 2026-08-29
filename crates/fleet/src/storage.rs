@@ -1,10 +1,14 @@
 use crate::comms_handler::{CommsError, Event, Node, TcpTlsConfig};
 use crate::configurations::{StorageNodeConfig, TlsPrivateInfo};
 use crate::constants::{
-    DB_PATH, INDEXED_BLOCK_HASH_PREFIX_KEY, INDEXED_TX_HASH_PREFIX_KEY, LAST_BLOCK_HASH_KEY,
-    NAMED_CONSTANT_PREPEND,
+    DB_COL_BC_ALL, DB_COL_BC_JSON, DB_COL_BC_META, DB_COL_BC_NAMED, DB_COL_BC_NOW,
+    DB_COL_BC_V0_2_0, DB_COL_BC_V0_3_0, DB_COL_BC_V0_4_0, DB_COL_BC_V0_5_0, DB_COL_BC_V0_6_0,
+    DB_PATH, DB_POINTER_SEPARATOR, INDEXED_TX_HASH_PREFIX_KEY, LAST_BLOCK_HASH_KEY,
 };
-use crate::db_utils::{self, SimpleDb, SimpleDbError, SimpleDbSpec, SimpleDbWriteBatch};
+use crate::db_utils::{
+    self, get_stored_value_from_db, indexed_block_hash_key, SimpleDb, SimpleDbError, SimpleDbSpec,
+    SimpleDbWriteBatch,
+};
 use crate::interfaces::{
     BlockStoredInfo, BlockchainItem, BlockchainItemMeta, Contract, DruidTxInfo, MempoolRequest,
     MineRequest, MinedBlock, NodeType, ProofOfWork, Response, StorageInterface, StorageRequest,
@@ -38,28 +42,6 @@ pub const LAST_CONTIGUOUS_BLOCK_KEY: &str = "LastContiguousBlockKey";
 
 /// Database columns
 pub const DB_COL_INTERNAL: &str = "internal";
-pub const DB_COL_BC_ALL: &str = "block_chain_all";
-pub const DB_COL_BC_NAMED: &str = "block_chain_named";
-pub const DB_COL_BC_META: &str = "block_chain_meta";
-pub const DB_COL_BC_JSON: &str = "block_chain_json";
-pub const DB_COL_BC_NOW: &str = "block_chain_v0.7.0";
-pub const DB_COL_BC_V0_6_0: &str = "block_chain_v0.6.0";
-pub const DB_COL_BC_V0_5_0: &str = "block_chain_v0.5.0";
-pub const DB_COL_BC_V0_4_0: &str = "block_chain_v0.4.0";
-pub const DB_COL_BC_V0_3_0: &str = "block_chain_v0.3.0";
-pub const DB_COL_BC_V0_2_0: &str = "block_chain_v0.2.0";
-
-/// Version columns
-pub const DB_COLS_BC: &[(&str, u32)] = &[
-    // (blockchain version, network version)
-    (DB_COL_BC_NOW, 5),
-    (DB_COL_BC_V0_6_0, 4),
-    (DB_COL_BC_V0_5_0, 3),
-    (DB_COL_BC_V0_4_0, 2),
-    (DB_COL_BC_V0_3_0, 1),
-    (DB_COL_BC_V0_2_0, 0),
-];
-pub const DB_POINTER_SEPARATOR: u8 = b':';
 
 /// Database specification
 pub const DB_SPEC: SimpleDbSpec = SimpleDbSpec {
@@ -1223,44 +1205,6 @@ pub fn all_ordered_stored_block_tx_hashes<'a>(
     all_txs.enumerate().map(|(idx, v)| (idx as u32, v))
 }
 
-/// Get the stored value at the given key
-///
-/// ### Arguments
-///
-/// * `key` - Given key to find the value.
-pub fn get_stored_value_from_db<K: AsRef<[u8]>>(
-    db: Arc<Mutex<SimpleDb>>,
-    key: K,
-) -> Option<BlockchainItem> {
-    let col_all = if key.as_ref().first() == Some(&NAMED_CONSTANT_PREPEND) {
-        DB_COL_BC_NAMED
-    } else {
-        DB_COL_BC_ALL
-    };
-    let u_db = db.lock().unwrap();
-    let pointer = ok_or_warn(u_db.get_cf(col_all, key), "get_stored_value pointer")?;
-
-    let (version, cf, key) = decode_version_pointer(&pointer);
-    let data = ok_or_warn(u_db.get_cf(cf, key), "get_stored_value data")?;
-    let data_json = ok_or_warn(
-        u_db.get_cf(DB_COL_BC_JSON, key),
-        "get_stored_value data_json",
-    )?;
-    let meta = {
-        let meta = u_db.get_cf(DB_COL_BC_META, key);
-        let meta = ok_or_warn(meta, "get_stored_value meta")?;
-        let meta = deserialize::<BlockchainItemMeta>(&meta).map(Some);
-        ok_or_warn(meta, "get_stored_value meta ser")?
-    };
-    Some(BlockchainItem {
-        version,
-        item_meta: meta,
-        key: key.to_owned(),
-        data,
-        data_json,
-    })
-}
-
 /// Version pointer for the column:key
 ///
 /// ### Arguments
@@ -1280,37 +1224,7 @@ fn version_pointer<K: AsRef<[u8]>>(cf: &'static str, key: K) -> Vec<u8> {
 /// ### Arguments
 ///
 /// * `b_num`  - The block number
-pub fn indexed_block_hash_key(b_num: u64) -> String {
-    format!("{INDEXED_BLOCK_HASH_PREFIX_KEY}{b_num:016x}")
-}
-
-/// The key for indexed block
-///
-/// ### Arguments
-///
-/// * `b_num`  - The block number
 /// * `tx_num` - The transaction index in the block
 pub fn indexed_tx_hash_key(b_num: u64, tx_num: u32) -> String {
     format!("{INDEXED_TX_HASH_PREFIX_KEY}{b_num:016x}_{tx_num:08x}")
-}
-
-/// Decodes a version pointer
-///
-/// ### Arguments
-///
-/// * `pointer`    - String to be split and decoded
-pub fn decode_version_pointer(pointer: &[u8]) -> (u32, &'static str, &[u8]) {
-    let mut it = pointer.split(|c| c == &DB_POINTER_SEPARATOR);
-    let cf = it.next().unwrap();
-    let (cf, version) = DB_COLS_BC.iter().find(|(v, _)| v.as_bytes() == cf).unwrap();
-    let key = it.next().unwrap();
-    (*version, cf, key)
-}
-
-/// Return an option, emiting a warning for errors converted to
-fn ok_or_warn<V, E: fmt::Display>(r: std::result::Result<Option<V>, E>, tag: &str) -> Option<V> {
-    r.unwrap_or_else(|e| {
-        warn!("{}: {}", tag, e);
-        None
-    })
 }

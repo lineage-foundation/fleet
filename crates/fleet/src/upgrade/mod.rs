@@ -11,8 +11,8 @@ mod tests_last_version_db;
 
 use crate::configurations::{DbMode, UnicornFixedInfo};
 use crate::constants::{
-    BLOCK_PREPEND, DB_PATH, DB_VERSION_KEY, FUND_KEY, NETWORK_VERSION_SERIALIZED, TX_PREPEND,
-    WALLET_PATH,
+    BLOCK_PREPEND, DB_COL_BC_NOW, DB_PATH, DB_VERSION_KEY, FUND_KEY, NETWORK_VERSION_SERIALIZED,
+    TX_PREPEND, WALLET_PATH,
 };
 use crate::db_utils::{
     new_db_no_check_version, new_db_with_version, SimpleDb, SimpleDbError, SimpleDbSpec,
@@ -297,7 +297,7 @@ pub fn get_upgrade_storage_db(
     let mut db = new_db_with_version(db_mode, spec, version, old_dbs.db, None)?;
     let raft_db = new_db_with_version(db_mode, raft_spec, version, old_dbs.raft_db, None)?;
 
-    db.upgrade_create_missing_cf(storage::DB_COL_BC_NOW)?;
+    db.upgrade_create_missing_cf(DB_COL_BC_NOW)?;
     Ok(ExtraNodeParams {
         db: Some(db),
         raft_db: Some(raft_db),
