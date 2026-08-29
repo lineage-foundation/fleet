@@ -3,26 +3,12 @@
 //! A library for modeling artistic concepts.
 #![allow(dead_code)]
 
-mod active_raft;
 mod api;
-mod asert;
-mod bounded_hash_set;
-mod block_pipeline;
-pub mod comms_handler;
-pub mod configurations;
-mod constants;
-pub mod db_utils;
-pub mod interfaces;
-pub mod key_creation;
 mod mempool;
 mod mempool_raft;
 mod miner;
-mod miner_pow;
 pub mod node_params;
 mod pre_launch;
-mod raft;
-mod raft_store;
-mod raft_util;
 mod storage;
 mod storage_fetch;
 mod storage_raft;
@@ -31,20 +17,22 @@ pub mod test_support;
 mod test_utils;
 #[cfg(test)]
 mod tests;
-pub mod threaded_call;
-mod tracked_utxo;
 pub mod transaction_gen;
 pub mod transactor;
-mod unicorn;
 pub mod upgrade;
 mod user;
-pub mod utils;
 pub mod wallet;
 
+pub use fleet_core::{
+    active_raft, asert, block_pipeline, bounded_hash_set, comms_handler, configurations,
+    constants, db_utils, interfaces, key_creation, miner_pow, raft, raft_store, raft_util,
+    threaded_call, tracked_utxo, unicorn, utils,
+};
+
 pub use api::routes;
-pub use constants::SANC_LIST_PROD;
-pub use interfaces::Rs2JsMsg;
-pub use interfaces::{MempoolRequest, MinerInterface, Response, StorageInterface};
+pub use fleet_core::SANC_LIST_PROD;
+pub use fleet_core::Rs2JsMsg;
+pub use fleet_core::{MempoolRequest, MinerInterface, Response, StorageInterface};
 pub use mempool::MempoolNode;
 pub use miner::MinerNode;
 pub use pre_launch::PreLaunchNode;
@@ -52,8 +40,8 @@ pub use storage::StorageNode;
 pub use transaction_gen::TransactionGen;
 pub use user::UserNode;
 pub use test_support::create_and_save_fake_to_wallet;
-pub use utils::LocalEvent;
-pub use utils::{
+pub use fleet_core::LocalEvent;
+pub use fleet_core::{
     create_valid_transaction, get_sanction_addresses, get_test_common_unicorn,
     loop_connnect_to_peers_async, loop_wait_connnect_to_peers_async,
     loops_re_connect_disconnect, shutdown_connections, ResponseResult,

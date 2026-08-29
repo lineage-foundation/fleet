@@ -1,8 +1,8 @@
 //! TLS test-support helpers for `comms_handler`.
 //!
 //! These are used directly by `comms_handler`'s own `#[cfg(test)]` code, and
-//! are re-exported from `crate::test_utils` so existing node test callers
-//! keep working unchanged.
+//! are re-exported by the `fleet` node crate's `test_utils` module so
+//! existing node test callers keep working unchanged.
 
 use crate::comms_handler::{test_tls_certificates, TcpTlsConfig, TcpTlsListner};
 use crate::configurations::TlsSpec;
