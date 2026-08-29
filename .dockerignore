@@ -25,8 +25,8 @@ assets/
 .hooks/
 
 /run/
-/src/bin/tls_data/
-/src/db/db/
-/src/wallet/wallet/
+/crates/fleet/src/bin/tls_data/
+/crates/fleet/src/db/db/
+/crates/fleet/src/wallet/wallet/
 /target/
 *.log

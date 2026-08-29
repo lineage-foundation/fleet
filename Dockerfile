@@ -40,7 +40,8 @@ ENV CARGO_TARGET_DIR=/lineage
 FROM chef AS planner
 # Minimal graph for `cargo chef prepare`; `.dockerignore` strips paths rustc does not need.
 COPY Cargo.toml Cargo.lock /lineage/
-COPY src /lineage/src
+COPY crates/fleet/Cargo.toml /lineage/crates/fleet/Cargo.toml
+COPY crates/fleet/src /lineage/crates/fleet/src
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
@@ -52,7 +53,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo chef cook --release --features gpu --recipe-path /lineage/recipe.json
 
 COPY Cargo.toml Cargo.lock /lineage/
-COPY src /lineage/src
+COPY crates/fleet/Cargo.toml /lineage/crates/fleet/Cargo.toml
+COPY crates/fleet/src /lineage/crates/fleet/src
 # Keep flags/features aligned with `cargo chef cook` above (`--release --features gpu`).
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
