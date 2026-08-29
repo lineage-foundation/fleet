@@ -741,6 +741,7 @@ dependencies = [
  "clap",
  "config",
  "fleet-core",
+ "fleet-wallet",
  "futures",
  "futures-util",
  "hex",
@@ -816,6 +817,19 @@ dependencies = [
  "url",
  "vulkano",
  "vulkano-shaders",
+]
+
+[[package]]
+name = "fleet-wallet"
+version = "1.1.2"
+dependencies = [
+ "bincode",
+ "fleet-core",
+ "hex",
+ "serde",
+ "tokio",
+ "tracing",
+ "tw_chain",
 ]
 
 [[package]]

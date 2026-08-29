@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/fleet", "crates/fleet-core"]
+members = ["crates/fleet", "crates/fleet-core", "crates/fleet-wallet"]
 resolver = "2"
 
 # Faster dev links on Linux and macOS (ignored on platforms that do not support it).

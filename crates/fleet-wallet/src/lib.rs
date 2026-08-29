@@ -1,10 +1,12 @@
-use crate::configurations::{DbMode, WalletTxSpec};
-use crate::constants::{FUND_KEY, KNOWN_ADDRESS_KEY, WALLET_PATH};
-use crate::db_utils::{
+#![allow(dead_code)]
+
+use fleet_core::configurations::{DbMode, WalletTxSpec};
+use fleet_core::constants::{FUND_KEY, KNOWN_ADDRESS_KEY, WALLET_PATH};
+use fleet_core::db_utils::{
     self, CustomDbSpec, SimpleDb, SimpleDbError, SimpleDbSpec, SimpleDbWriteBatch, DB_COL_DEFAULT,
 };
-use crate::utils::{get_payments_for_wallet, make_wallet_tx_info};
-use crate::Rs2JsMsg;
+use fleet_core::utils::{get_payments_for_wallet, make_wallet_tx_info};
+use fleet_core::Rs2JsMsg;
 use bincode::{deserialize, serialize};
 use hex::FromHexError;
 use serde::{Deserialize, Serialize};
