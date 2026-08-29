@@ -8,6 +8,8 @@ pub mod tcp_tls;
 pub mod test_tls_certificates;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub mod tls_test_support;
 
 pub use error::CommsError;
 pub use node::Node;
