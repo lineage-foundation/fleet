@@ -1373,7 +1373,7 @@ fn take_join_handles<'a>(peers: impl Iterator<Item = &'a mut Peer>) -> Vec<JoinH
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_utils::get_common_tls_config;
+    use crate::comms_handler::tls_test_support::get_common_tls_config;
     use std::time::Duration;
 
     #[tokio::test(flavor = "current_thread")]

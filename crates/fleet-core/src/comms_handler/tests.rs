@@ -3,7 +3,9 @@
 use super::{CommsError, Event, Node, TcpTlsConfig};
 use crate::constants::NETWORK_VERSION;
 use crate::interfaces::NodeType;
-use crate::test_utils::{get_bound_common_tls_configs, get_common_tls_config, get_test_tls_spec};
+use super::tls_test_support::{
+    get_bound_common_tls_configs, get_common_tls_config, get_test_tls_spec,
+};
 use crate::utils::tracing_log_try_init;
 use bincode::deserialize;
 use futures::future::join_all;
