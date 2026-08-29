@@ -49,14 +49,14 @@ COPY --from=planner /lineage/recipe.json /lineage/recipe.json
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    cargo chef cook --release --recipe-path /lineage/recipe.json
+    cargo chef cook --release --features gpu --recipe-path /lineage/recipe.json
 
 COPY Cargo.toml Cargo.lock /lineage/
 COPY src /lineage/src
-# Keep flags/features aligned with `cargo chef cook` above (`--release`, default crate features).
+# Keep flags/features aligned with `cargo chef cook` above (`--release --features gpu`).
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    cargo build --release --bin node
+    cargo build --release --bin node --features gpu
 
 # Runtime libs absent from distroless/cc (`ldd`-based list on Debian-built `node`).
 # Pulled via apt so transitive deps match distroless/cc-debian13 (trixie).
