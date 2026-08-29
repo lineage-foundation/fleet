@@ -19,6 +19,7 @@ pub mod raft_store;
 pub mod raft_util;
 pub mod threaded_call;
 pub mod tracked_utxo;
+pub mod transactor;
 pub mod unicorn;
 pub mod utils;
 

@@ -18,7 +18,6 @@ mod test_utils;
 #[cfg(test)]
 mod tests;
 pub mod transaction_gen;
-pub mod transactor;
 pub mod upgrade;
 mod user;
 pub use fleet_wallet as wallet;
@@ -26,7 +25,7 @@ pub use fleet_wallet as wallet;
 pub use fleet_core::{
     active_raft, asert, block_pipeline, bounded_hash_set, comms_handler, configurations,
     constants, db_utils, interfaces, key_creation, miner_pow, raft, raft_store, raft_util,
-    threaded_call, tracked_utxo, unicorn, utils,
+    threaded_call, tracked_utxo, transactor, unicorn, utils,
 };
 
 pub use api::routes;
