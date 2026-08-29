@@ -1,7 +1,7 @@
 # Local multi-node stack: mempool + storage + miner on bridge network `lineage`.
 #
 # If you change static `ipv4_address` below, mirror the addresses in `tls_certificates.json`
-# under `socket_name_mapping` (`src/bin/node_settings_gen_key_certs.sh` `emit_json` keeps them).
+# under `socket_name_mapping`.
 #
 # Only bind-mount `node_settings.toml` from the host. All other configs use the
 # defaults baked into the image (`Dockerfile` copies `.docker/conf/*` → `/etc/`).

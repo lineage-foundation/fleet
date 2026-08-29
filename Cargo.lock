@@ -740,13 +740,9 @@ dependencies = [
  "chrono",
  "clap",
  "config",
- "crevice",
- "debug-ignore",
  "fleet-core",
  "futures",
  "futures-util",
- "gl",
- "glfw",
  "hex",
  "keccak_prime",
  "merkle-log 0.0.3",
@@ -773,8 +769,6 @@ dependencies = [
  "trust-dns-resolver",
  "tw_chain",
  "url",
- "vulkano",
- "vulkano-shaders",
  "warp",
 ]
 
