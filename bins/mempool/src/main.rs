@@ -219,7 +219,7 @@ fn clap_app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn load_settings(matches: &clap::ArgMatches) -> config::Config {
-    use fleet_core::config_load::{build, rebuild};
+    use fleet_core::config_load::{build_with_env_overrides, rebuild};
 
     let setting_file = matches
         .value_of("config")
@@ -240,7 +240,7 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
         .value_of("initial_issuance")
         .unwrap_or("src/bin/initial_issuance.json");
 
-    let mut settings = build(|b| {
+    let mut settings = build_with_env_overrides(|b| {
         Ok(b.set_default("sanction_list", Vec::<String>::new())?
             .set_default("api_keys", Vec::<String>::new())?
             .set_default("mempool_api_port", 3002)?

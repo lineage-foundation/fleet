@@ -245,7 +245,7 @@ fn clap_app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn load_settings(matches: &clap::ArgMatches) -> config::Config {
-    use fleet_core::config_load::{build, rebuild};
+    use fleet_core::config_load::{build_with_env_overrides, rebuild};
     let mut settings;
     let mut node_index = 0;
     let setting_file = matches
@@ -261,7 +261,7 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
         .value_of("api_config")
         .unwrap_or("src/bin/api_config.json");
 
-    settings = build(|b| {
+    settings = build_with_env_overrides(|b| {
         Ok(b.set_default("api_keys", Vec::<String>::new())?
             .set_default("user_api_port", DEFAULT_USER_API_PORT)?
             .set_default("user_api_use_tls", true)?

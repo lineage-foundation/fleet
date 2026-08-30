@@ -351,7 +351,7 @@ fn clap_app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn load_settings(matches: &clap::ArgMatches) -> (config::Config, Option<config::Config>) {
-    use fleet_core::config_load::{build, rebuild};
+    use fleet_core::config_load::{build_with_env_overrides, rebuild};
 
     let mut miner_index: usize = 0;
     let mut user_index: usize = 0;
@@ -369,7 +369,7 @@ fn load_settings(matches: &clap::ArgMatches) -> (config::Config, Option<config::
         .value_of("api_config")
         .unwrap_or("src/bin/api_config.json");
 
-    let mut settings = build(|b| {
+    let mut settings = build_with_env_overrides(|b| {
         Ok(b.set_default("api_keys", Vec::<String>::new())?
             .set_default("miner_mempool_node_idx", 0)?
             .set_default("miner_storage_node_idx", 0)?
