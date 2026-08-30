@@ -245,7 +245,7 @@ fn clap_app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn load_settings(matches: &clap::ArgMatches) -> config::Config {
-    use fleet_core::config_load::{build_with_env_overrides, rebuild};
+    use fleet_core::config_load::{build_with_env_overrides, node_addresses, rebuild};
     let mut settings;
     let mut node_index = 0;
     let setting_file = matches
@@ -284,33 +284,24 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
     if let Some(idx) = matches.value_of("index") {
         node_index = idx.parse::<usize>().unwrap();
     } else if let Some(address) = matches.value_of("address") {
-        let mut node = HashMap::new();
-        node.insert("address".to_owned(), address.to_owned());
+        let mut user_nodes = node_addresses(&settings, "user_nodes");
 
-        if let Ok(mut user_nodes) = settings.get_array("user_nodes") {
-            let passed_addr_val = Value::new(None, node);
-
-            node_index = if user_nodes.contains(&passed_addr_val) {
-                user_nodes
-                    .iter()
-                    .position(|r| r == &passed_addr_val)
-                    .unwrap()
-            } else {
-                user_nodes.push(passed_addr_val);
+        node_index = match user_nodes.iter().position(|a| a == address) {
+            Some(i) => i,
+            None => {
+                user_nodes.push(address.to_owned());
                 user_nodes.len() - 1
-            };
-        }
+            }
+        };
         settings = rebuild(settings, |b| Ok(b.set_override("user_address", address)?));
     }
 
     if matches.value_of("address").is_none() {
-        let user_nodes = settings
-            .get_array("user_nodes")
-            .expect("No 'user_nodes' entry in the TOML");
-        let raw_map: &Value = user_nodes.get(node_index).unwrap();
-        let map = raw_map.clone().into_table().unwrap();
-        let addr = map.get("address").unwrap();
-        settings = rebuild(settings, |b| Ok(b.set_override("user_address", addr.to_string())?));
+        let user_nodes = node_addresses(&settings, "user_nodes");
+        let addr = user_nodes
+            .get(node_index)
+            .expect("No user_nodes entry at the resolved index");
+        settings = rebuild(settings, |b| Ok(b.set_override("user_address", addr.clone())?));
     }
 
     let mut db_mode = settings.get_table("user_db_mode").unwrap();
