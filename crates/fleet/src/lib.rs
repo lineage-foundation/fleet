@@ -4,8 +4,6 @@
 #![allow(dead_code)]
 
 mod api;
-mod mempool;
-mod mempool_raft;
 mod miner;
 pub use fleet_node_common as node_params;
 mod pre_launch;
@@ -32,7 +30,9 @@ pub use api::routes;
 pub use fleet_core::SANC_LIST_PROD;
 pub use fleet_core::Rs2JsMsg;
 pub use fleet_core::{MempoolRequest, MinerInterface, Response, StorageInterface};
-pub use mempool::MempoolNode;
+pub use fleet_mempool as mempool;
+pub use fleet_mempool::mempool_raft;
+pub use fleet_mempool::MempoolNode;
 pub use miner::MinerNode;
 pub use pre_launch::PreLaunchNode;
 pub use storage::StorageNode;

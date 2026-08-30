@@ -1,21 +1,21 @@
-use crate::active_raft::ActiveRaft;
-use crate::asert::calculate_asert_target;
-use crate::block_pipeline::{
+use fleet_core::active_raft::ActiveRaft;
+use fleet_core::asert::calculate_asert_target;
+use fleet_core::block_pipeline::{
     MiningPipelineInfo, MiningPipelineInfoImport, MiningPipelineInfoPreDifficulty,
     MiningPipelineItem, MiningPipelinePhaseChange, MiningPipelineStatus, Participants,
     PipelineEventInfo,
 };
-use crate::configurations::{MempoolNodeConfig, MinerWhitelist, UnicornFixedInfo};
-use crate::constants::{BLOCK_SIZE_IN_TX, COINBASE_MATURITY, DB_PATH, TX_POOL_LIMIT};
-use crate::db_utils::{self, SimpleDb, SimpleDbError, SimpleDbSpec};
-use crate::interfaces::{
+use fleet_core::configurations::{MempoolNodeConfig, MinerWhitelist, UnicornFixedInfo};
+use fleet_core::constants::{BLOCK_SIZE_IN_TX, COINBASE_MATURITY, DB_PATH, TX_POOL_LIMIT};
+use fleet_core::db_utils::{self, SimpleDb, SimpleDbError, SimpleDbSpec};
+use fleet_core::interfaces::{
     BlockStoredInfo, InitialIssuance, MempoolConsensusedRuntimeData, UtxoSet, WinningPoWInfo,
 };
-use crate::raft::{RaftCommit, RaftCommitData, RaftData, RaftMessageWrapper};
-use crate::raft_util::{RaftContextKey, RaftInFlightProposals};
-use crate::tracked_utxo::TrackedUtxoSet;
-use crate::unicorn::{UnicornFixedParam, UnicornInfo};
-use crate::utils::{
+use fleet_core::raft::{RaftCommit, RaftCommitData, RaftData, RaftMessageWrapper};
+use fleet_core::raft_util::{RaftContextKey, RaftInFlightProposals};
+use fleet_core::tracked_utxo::TrackedUtxoSet;
+use fleet_core::unicorn::{UnicornFixedParam, UnicornInfo};
+use fleet_core::utils::{
     calculate_reward, construct_coinbase_tx, create_socket_addr_for_list, get_timestamp_now,
     get_total_coinbase_tokens, make_utxo_set_from_seed, try_deserialize, BackupCheck,
     UtxoReAlignCheck,
@@ -340,7 +340,7 @@ impl MempoolRaft {
 
         let activation_height_asert = config
             .activation_height_asert
-            .unwrap_or(crate::constants::ACTIVATION_HEIGHT_ASERT);
+            .unwrap_or(fleet_core::constants::ACTIVATION_HEIGHT_ASERT);
 
         let consensused = MempoolConsensused::default()
             .with_peers_len(peers_len)
@@ -1085,7 +1085,6 @@ impl MempoolRaft {
     /// ## NOTE
     ///
     /// Only used during tests
-    #[cfg(test)]
     pub fn get_committed_utxo_tracked_pk_cache(
         &self,
     ) -> std::collections::HashMap<String, BTreeSet<tw_chain::primitives::transaction::OutPoint>>
@@ -1102,7 +1101,6 @@ impl MempoolRaft {
     /// ## NOTE
     ///
     /// Only used during tests
-    #[cfg(test)]
     pub fn committed_utxo_remove_pk_cache(&mut self, entry: &str) {
         self.consensused.utxo_set.remove_pk_cache_entry(entry)
     }
@@ -1945,8 +1943,8 @@ fn take_first_n<K: Clone + Ord, V>(n: usize, from: &mut BTreeMap<K, V>) -> BTree
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::configurations::{DbMode, NodeSpec, TxOutSpec};
-    use crate::utils::{create_socket_addr, create_valid_transaction, get_test_common_unicorn};
+    use fleet_core::configurations::{DbMode, NodeSpec, TxOutSpec};
+    use fleet_core::utils::{create_socket_addr, create_valid_transaction, get_test_common_unicorn};
     use rug::Integer;
     use std::collections::BTreeSet;
     use tw_chain::crypto::sign_ed25519 as sign;
