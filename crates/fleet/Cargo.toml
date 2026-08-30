@@ -15,7 +15,11 @@ chrono = "0.4.10"
 clap = "2.33.0"
 config = { version = "0.14", default-features = false, features = ["toml", "json"] }
 fleet-core = { path = "../fleet-core" }
+fleet-mempool = { path = "../fleet-mempool" }
+fleet-miner = { path = "../fleet-miner" }
 fleet-node-common = { path = "../fleet-node-common" }
+fleet-storage = { path = "../fleet-storage" }
+fleet-user = { path = "../fleet-user" }
 fleet-wallet = { path = "../fleet-wallet" }
 futures = "0.3"
 futures-util = "0.3.15"
@@ -50,7 +54,7 @@ rustls-pemfile = "2.0.0"
 
 [features]
 mock = ["fleet-core/mock"]
-config_override = []
-gpu = ["fleet-core/gpu"]
+config_override = ["fleet-mempool/config_override"]
+gpu = ["fleet-core/gpu", "fleet-miner/gpu"]
 # The miner benchmarks (in fleet-core) construct OpenGL/Vulkan miners, so they need the GPU backends.
 benchmark_miners = ["gpu", "fleet-core/benchmark_miners"]

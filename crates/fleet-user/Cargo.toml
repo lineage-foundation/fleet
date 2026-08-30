@@ -1,0 +1,20 @@
+[package]
+name = "fleet-user"
+version = "1.1.2"
+authors = ["Lineage Team <info@lineage.foundation>"]
+edition = "2021"
+description = "Lineage user node."
+
+[dependencies]
+async-trait = "0.1.58"
+bincode = "1.2.1"
+bytes = { version = "1.0.1", features = ["serde"] }
+fleet-core = { path = "../fleet-core" }
+fleet-node-common = { path = "../fleet-node-common" }
+fleet-wallet = { path = "../fleet-wallet" }
+serde = { version = "1.0.104", features = ["derive"] }
+serde_json = "1.0.61"
+tokio = { version = "1.7.1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1.40"
+tracing-futures = "0.2.3"
+tw_chain = "1.1.3"

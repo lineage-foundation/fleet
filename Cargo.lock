@@ -741,7 +741,11 @@ dependencies = [
  "clap",
  "config",
  "fleet-core",
+ "fleet-mempool",
+ "fleet-miner",
  "fleet-node-common",
+ "fleet-storage",
+ "fleet-user",
  "fleet-wallet",
  "futures",
  "futures-util",
@@ -821,11 +825,80 @@ dependencies = [
 ]
 
 [[package]]
+name = "fleet-mempool"
+version = "1.1.2"
+dependencies = [
+ "bincode",
+ "bytes",
+ "fleet-core",
+ "fleet-node-common",
+ "rug",
+ "serde",
+ "tokio",
+ "tracing",
+ "tracing-futures",
+ "tw_chain",
+]
+
+[[package]]
+name = "fleet-miner"
+version = "1.1.2"
+dependencies = [
+ "async-trait",
+ "bincode",
+ "bytes",
+ "fleet-core",
+ "fleet-node-common",
+ "fleet-wallet",
+ "hex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-futures",
+ "tw_chain",
+]
+
+[[package]]
 name = "fleet-node-common"
 version = "1.1.2"
 dependencies = [
  "fleet-core",
  "fleet-wallet",
+]
+
+[[package]]
+name = "fleet-storage"
+version = "1.1.2"
+dependencies = [
+ "bincode",
+ "bytes",
+ "fleet-core",
+ "fleet-node-common",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-futures",
+ "tw_chain",
+]
+
+[[package]]
+name = "fleet-user"
+version = "1.1.2"
+dependencies = [
+ "async-trait",
+ "bincode",
+ "bytes",
+ "fleet-core",
+ "fleet-node-common",
+ "fleet-wallet",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-futures",
+ "tw_chain",
 ]
 
 [[package]]

@@ -1,8 +1,8 @@
-use crate::configurations::StorageNodeConfig;
-use crate::db_utils::indexed_block_hash_key;
-use crate::interfaces::{BlockchainItem, BlockchainItemMeta};
-use crate::storage::indexed_tx_hash_key;
-use crate::utils::create_socket_addr;
+use fleet_core::configurations::StorageNodeConfig;
+use fleet_core::db_utils::indexed_block_hash_key;
+use fleet_core::interfaces::{BlockchainItem, BlockchainItemMeta};
+use crate::indexed_tx_hash_key;
+use fleet_core::utils::create_socket_addr;
 use std::fmt;
 use std::net::SocketAddr;
 use std::ops::Range;

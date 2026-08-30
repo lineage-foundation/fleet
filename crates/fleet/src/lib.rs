@@ -4,22 +4,14 @@
 #![allow(dead_code)]
 
 mod api;
-mod mempool;
-mod mempool_raft;
-mod miner;
 pub use fleet_node_common as node_params;
 mod pre_launch;
-mod storage;
-mod storage_fetch;
-mod storage_raft;
 pub mod test_support;
 #[cfg(test)]
 mod test_utils;
 #[cfg(test)]
 mod tests;
-pub mod transaction_gen;
 pub mod upgrade;
-mod user;
 pub use fleet_wallet as wallet;
 
 pub use fleet_core::{
@@ -32,12 +24,19 @@ pub use api::routes;
 pub use fleet_core::SANC_LIST_PROD;
 pub use fleet_core::Rs2JsMsg;
 pub use fleet_core::{MempoolRequest, MinerInterface, Response, StorageInterface};
-pub use mempool::MempoolNode;
-pub use miner::MinerNode;
+pub use fleet_mempool as mempool;
+pub use fleet_mempool::mempool_raft;
+pub use fleet_mempool::MempoolNode;
+pub use fleet_miner as miner;
+pub use fleet_miner::MinerNode;
 pub use pre_launch::PreLaunchNode;
-pub use storage::StorageNode;
-pub use transaction_gen::TransactionGen;
-pub use user::UserNode;
+pub use fleet_storage as storage;
+pub use fleet_storage::{storage_fetch, storage_raft};
+pub use fleet_storage::StorageNode;
+pub use fleet_user as user;
+pub use fleet_user::transaction_gen;
+pub use fleet_user::transaction_gen::TransactionGen;
+pub use fleet_user::UserNode;
 pub use test_support::create_and_save_fake_to_wallet;
 pub use fleet_core::LocalEvent;
 pub use fleet_core::{

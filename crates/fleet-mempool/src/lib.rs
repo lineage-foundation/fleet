@@ -1,9 +1,13 @@
-use crate::block_pipeline::{MiningPipelineItem, MiningPipelineStatus, Participants};
-use crate::comms_handler::{Event, Node, TcpTlsConfig};
-use crate::configurations::{MempoolNodeConfig, MempoolNodeSharedConfig, TlsPrivateInfo};
-use crate::constants::{DB_PATH, RESEND_TRIGGER_MESSAGES_COMPUTE_LIMIT};
-use crate::db_utils::{self, SimpleDb, SimpleDbSpec};
-use crate::interfaces::{
+#![allow(dead_code)]
+
+pub mod mempool_raft;
+
+use fleet_core::block_pipeline::{MiningPipelineItem, MiningPipelineStatus, Participants};
+use fleet_core::comms_handler::{Event, Node, TcpTlsConfig};
+use fleet_core::configurations::{MempoolNodeConfig, MempoolNodeSharedConfig, TlsPrivateInfo};
+use fleet_core::constants::{DB_PATH, RESEND_TRIGGER_MESSAGES_COMPUTE_LIMIT};
+use fleet_core::db_utils::{self, SimpleDb, SimpleDbSpec};
+use fleet_core::interfaces::{
     BlockStoredInfo, CommonBlockInfo, Contract, DruidDroplet, DruidPool, InitialIssuance,
     MempoolApi, MempoolApiRequest, MempoolConsensusedRuntimeData, MempoolError,
     MempoolInterface, MempoolRequest, MineRequest, MinedBlock, MinedBlockExtraInfo, NodeType,
@@ -11,11 +15,11 @@ use crate::interfaces::{
     UtxoFetchType, UtxoSet, WinningPoWInfo,
 };
 use crate::mempool_raft::{CommittedItem, CoordinatedCommand, MempoolRaft, MempoolRuntimeItem};
-use crate::node_params::ExtraNodeParams;
-use crate::raft::RaftCommit;
-use crate::threaded_call::{ThreadedCallChannel, ThreadedCallSender};
-use crate::tracked_utxo::TrackedUtxoSet;
-use crate::utils::{
+use fleet_node_common::ExtraNodeParams;
+use fleet_core::raft::RaftCommit;
+use fleet_core::threaded_call::{ThreadedCallChannel, ThreadedCallSender};
+use fleet_core::tracked_utxo::TrackedUtxoSet;
+use fleet_core::utils::{
     apply_mining_tx, check_druid_participants, create_item_asset_tx_from_sig, create_socket_addr,
     format_parition_pow_address, generate_pow_random_num, get_timestamp_now,
     is_timestamp_difference_greater, to_api_keys, to_route_pow_infos, validate_pow_block,
@@ -357,7 +361,6 @@ impl MempoolNode {
     /// ## NOTE
     ///
     /// Only used during tests
-    #[cfg(test)]
     pub fn get_pk_cache(
         &self,
     ) -> std::collections::HashMap<String, BTreeSet<tw_chain::primitives::transaction::OutPoint>>
@@ -374,7 +377,6 @@ impl MempoolNode {
     /// ## NOTE
     ///
     /// Only used during tests
-    #[cfg(test)]
     pub fn remove_pk_cache_entry(&mut self, entry: &str) {
         self.node_raft.committed_utxo_remove_pk_cache(entry);
     }
@@ -2531,7 +2533,7 @@ impl MempoolApi for MempoolNode {
 
     fn send_shared_config(
         &mut self,
-        shared_config: crate::configurations::MempoolNodeSharedConfig,
+        shared_config: fleet_core::configurations::MempoolNodeSharedConfig,
     ) -> Response {
         if self
             .inject_next_event(
