@@ -1,24 +1,29 @@
-use crate::comms_handler::{CommsError, Event, Node, TcpTlsConfig};
-use crate::configurations::{StorageNodeConfig, TlsPrivateInfo};
-use crate::constants::{
+#![allow(dead_code)]
+
+pub mod storage_fetch;
+pub mod storage_raft;
+
+use fleet_core::comms_handler::{CommsError, Event, Node, TcpTlsConfig};
+use fleet_core::configurations::{StorageNodeConfig, TlsPrivateInfo};
+use fleet_core::constants::{
     DB_COL_BC_ALL, DB_COL_BC_JSON, DB_COL_BC_META, DB_COL_BC_NAMED, DB_COL_BC_NOW,
     DB_COL_BC_V0_2_0, DB_COL_BC_V0_3_0, DB_COL_BC_V0_4_0, DB_COL_BC_V0_5_0, DB_COL_BC_V0_6_0,
     DB_PATH, DB_POINTER_SEPARATOR, INDEXED_TX_HASH_PREFIX_KEY, LAST_BLOCK_HASH_KEY,
 };
-use crate::db_utils::{
+use fleet_core::db_utils::{
     self, get_stored_value_from_db, indexed_block_hash_key, SimpleDb, SimpleDbError, SimpleDbSpec,
     SimpleDbWriteBatch,
 };
-use crate::interfaces::{
+use fleet_core::interfaces::{
     BlockStoredInfo, BlockchainItem, BlockchainItemMeta, Contract, DruidTxInfo, MempoolRequest,
     MineRequest, MinedBlock, NodeType, ProofOfWork, Response, StorageInterface, StorageRequest,
     StoredSerializingBlock,
 };
-use crate::node_params::ExtraNodeParams;
-use crate::raft::RaftCommit;
+use fleet_node_common::ExtraNodeParams;
+use fleet_core::raft::RaftCommit;
 use crate::storage_fetch::{FetchStatus, FetchedBlockChain, StorageFetch};
 use crate::storage_raft::{CommittedItem, CompleteBlock, StorageRaft};
-use crate::utils::{
+use fleet_core::utils::{
     construct_valid_block_pow_hash, create_socket_addr, get_genesis_tx_in_display, to_api_keys,
     to_route_pow_infos, ApiKeys, LocalEvent, LocalEventChannel, LocalEventSender, ResponseResult,
     RoutesPoWInfo,
@@ -188,7 +193,7 @@ impl StorageNode {
 
         let activation_height_asert = config
             .activation_height_asert
-            .unwrap_or(crate::constants::ACTIVATION_HEIGHT_ASERT);
+            .unwrap_or(fleet_core::constants::ACTIVATION_HEIGHT_ASERT);
 
         StorageNode {
             node,
