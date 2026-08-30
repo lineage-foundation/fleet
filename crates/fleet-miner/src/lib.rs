@@ -1,24 +1,26 @@
-use crate::comms_handler::Node;
-use crate::comms_handler::{CommsError, Event, TcpTlsConfig};
-use crate::configurations::{MinerNodeConfig, TlsPrivateInfo};
-use crate::constants::INTERNAL_TX_LIMIT;
-use crate::db_utils;
-use crate::interfaces::{
+#![allow(dead_code)]
+
+use fleet_core::comms_handler::Node;
+use fleet_core::comms_handler::{CommsError, Event, TcpTlsConfig};
+use fleet_core::configurations::{MinerNodeConfig, TlsPrivateInfo};
+use fleet_core::constants::INTERNAL_TX_LIMIT;
+use fleet_core::db_utils;
+use fleet_core::interfaces::{
     BlockPoWReceived, BlockchainItem, CurrentBlockWithMutex, MempoolRequest, MineApiRequest,
     MineRequest, MinerInterface, NodeType, PowInfo, ProofOfWork, Response, Rs2JsMsg,
     StorageRequest, UtxoFetchType, UtxoSet,
 };
-use crate::node_params::ExtraNodeParams;
-use crate::threaded_call::{ThreadedCallChannel, ThreadedCallSender};
-use crate::transactor::Transactor;
-use crate::utils::{
+use fleet_node_common::ExtraNodeParams;
+use fleet_core::threaded_call::{ThreadedCallChannel, ThreadedCallSender};
+use fleet_core::transactor::Transactor;
+use fleet_core::utils::{
     self, apply_mining_tx, construct_coinbase_tx, create_socket_addr, format_parition_pow_address,
     generate_pow_for_block, get_payments_for_wallet, get_payments_for_wallet_from_utxo,
     to_api_keys, to_route_pow_infos, try_send_to_ui, ApiKeys, DeserializedBlockchainItem,
     LocalEvent, LocalEventChannel, LocalEventSender, ResponseResult, RoutesPoWInfo,
     RunningTaskOrResult,
 };
-use crate::wallet::{LockedCoinbase, WalletDb, WalletDbError, DB_SPEC};
+use fleet_wallet::{LockedCoinbase, WalletDb, WalletDbError, DB_SPEC};
 use async_trait::async_trait;
 use bincode::{deserialize, serialize};
 use bytes::Bytes;
@@ -226,7 +228,7 @@ impl MinerNode {
 
         let activation_height_asert = config
             .activation_height_asert
-            .unwrap_or(crate::constants::ACTIVATION_HEIGHT_ASERT);
+            .unwrap_or(fleet_core::constants::ACTIVATION_HEIGHT_ASERT);
 
         MinerNode {
             node,

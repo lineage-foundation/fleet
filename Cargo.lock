@@ -742,6 +742,7 @@ dependencies = [
  "config",
  "fleet-core",
  "fleet-mempool",
+ "fleet-miner",
  "fleet-node-common",
  "fleet-storage",
  "fleet-wallet",
@@ -832,6 +833,25 @@ dependencies = [
  "fleet-node-common",
  "rug",
  "serde",
+ "tokio",
+ "tracing",
+ "tracing-futures",
+ "tw_chain",
+]
+
+[[package]]
+name = "fleet-miner"
+version = "1.1.2"
+dependencies = [
+ "async-trait",
+ "bincode",
+ "bytes",
+ "fleet-core",
+ "fleet-node-common",
+ "fleet-wallet",
+ "hex",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-futures",

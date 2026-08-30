@@ -4,7 +4,6 @@
 #![allow(dead_code)]
 
 mod api;
-mod miner;
 pub use fleet_node_common as node_params;
 mod pre_launch;
 pub mod test_support;
@@ -30,7 +29,8 @@ pub use fleet_core::{MempoolRequest, MinerInterface, Response, StorageInterface}
 pub use fleet_mempool as mempool;
 pub use fleet_mempool::mempool_raft;
 pub use fleet_mempool::MempoolNode;
-pub use miner::MinerNode;
+pub use fleet_miner as miner;
+pub use fleet_miner::MinerNode;
 pub use pre_launch::PreLaunchNode;
 pub use fleet_storage as storage;
 pub use fleet_storage::{storage_fetch, storage_raft};
