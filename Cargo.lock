@@ -2123,6 +2123,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pre_launch"
+version = "1.1.2"
+dependencies = [
+ "clap",
+ "config",
+ "fleet",
+ "fleet-core",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "prettyplease"
 version = "0.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
