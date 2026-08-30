@@ -1373,3 +1373,11 @@ pub use fleet_user::{generate_rb_transactions, RbReceiverData, RbSenderData};
 pub fn map_items(details: Vec<(String, u64)>) -> BTreeMap<String, u64> {
     details.into_iter().collect()
 }
+
+pub async fn mempool_committed_tx_pool(
+    network: &mut Network,
+    mempool: &str,
+) -> BTreeMap<String, Transaction> {
+    let c = network.mempool(mempool).unwrap().lock().await;
+    c.get_committed_tx_pool().clone()
+}

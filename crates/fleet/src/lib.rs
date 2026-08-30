@@ -7,10 +7,9 @@ pub use fleet_api as api;
 pub use fleet_node_common as node_params;
 mod pre_launch;
 pub mod test_support;
-#[cfg(test)]
-mod test_utils;
-#[cfg(test)]
-mod tests;
+// Public (not cfg(test)) so the fleet-integration test crate can use these helpers across the
+// crate boundary; kept here rather than a separate crate to avoid a cycle with pre_launch/upgrade.
+pub mod test_utils;
 pub mod upgrade;
 pub use fleet_wallet as wallet;
 
