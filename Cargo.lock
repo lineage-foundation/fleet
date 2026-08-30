@@ -824,6 +824,7 @@ dependencies = [
  "protobuf",
  "raft",
  "rand 0.7.3",
+ "regex",
  "ring 0.16.20",
  "rocksdb",
  "rug",
@@ -1751,6 +1752,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83faa42c0a078c393f6b29d5db232d8be22776a891f8f56e5284faee4a20b327"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "mempool"
+version = "1.1.2"
+dependencies = [
+ "clap",
+ "config",
+ "fleet-api",
+ "fleet-core",
+ "fleet-mempool",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "warp",
 ]
 
 [[package]]
