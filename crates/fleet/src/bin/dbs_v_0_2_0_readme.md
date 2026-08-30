@@ -24,9 +24,9 @@ In `src/bin/node_settings_run.sh`, comment out the line launching mempool, miner
 
 These instructions will be easier to follow with 5 tabs ready to run the following:
  * `rm -rf src/db/db src/wallet/wallet; src/bin/node_settings_run.sh set_log info`
- * `RUST_LOG="info" target/release/node mempool`
- * `RUST_LOG="info" target/release/node user`
- * `RUST_LOG="info" target/release/node miner`
+ * `RUST_LOG="info" target/release/mempool`
+ * `RUST_LOG="info" target/release/user`
+ * `RUST_LOG="info" target/release/miner`
  * `tar -czf db_mempool_before_block.tar src/db/db/test.mempool*`
 
 The execution than proceed:

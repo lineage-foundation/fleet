@@ -148,7 +148,7 @@ Branch names are up to you; what matters for history and releases is consistent 
 Workflow [`.github/workflows/trivy.yml`](.github/workflows/trivy.yml) runs:
 
 - `trivy fs` for vulnerabilities and misconfiguration on the repository (respects [.trivyignore](.trivyignore)),
-- `trivy image` for vulnerabilities on the freshly built `fleet-node:ci` image.
+- `trivy image` for vulnerabilities on the freshly built per-node images (`fleet-miner:ci` and the slim `fleet-mempool:ci`).
 
 Pull requests that touch `Dockerfile`, Compose, Cargo, `.docker/`, `.trivyignore`, or the workflow itself gate on severity `CRITICAL` and `HIGH` (see `env.TRIVY_SEVERITY` in the workflow).
 
