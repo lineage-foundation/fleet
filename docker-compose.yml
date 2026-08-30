@@ -26,7 +26,6 @@ x-node-build: &node-build
   build:
     context: .
     dockerfile: Dockerfile
-  image: fleet-node:local
   platform: ${FLEET_COMPOSE_PLATFORM:-linux/amd64}
 
 x-node-hardening: &node-hardening
@@ -54,32 +53,45 @@ x-volumes-miner: &volumes-miner
 services:
   mempool-node:
     <<: [*node-build, *node-hardening]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: mempool
+    image: fleet-mempool:local
     environment:
       RUST_LOG: info,debug
     ports:
       - "12300:12300"
       - "3003:3003"
     volumes: *volumes-mempool
-    command: ["mempool"]
     networks:
       lineage:
         ipv4_address: 172.28.0.3
 
   storage-node:
     <<: [*node-build, *node-hardening]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: storage
+    image: fleet-storage:local
     environment:
       RUST_LOG: info,debug
     ports:
       - "12330:12330"
       - "3001:3001"
     volumes: *volumes-storage
-    command: ["storage"]
     networks:
       lineage:
         ipv4_address: 172.28.0.2
 
   miner-node:
     <<: [*node-build, *node-hardening]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: miner
+    image: fleet-miner:local
     environment:
       RUST_LOG: info,debug
     depends_on:
@@ -89,7 +101,6 @@ services:
       - "12340:12340"
       - "3004:3004"
     volumes: *volumes-miner
-    command: ["miner"]
     networks:
       lineage:
         ipv4_address: 172.28.0.4
