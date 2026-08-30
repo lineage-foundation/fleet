@@ -127,6 +127,8 @@ Each API-serving node (`mempool`, `storage`, `miner`, `user`) exposes a RESTful 
 
 This replaces the previous RPC-style API. The old flat action-paths (`/make_payment`, `/block_by_num`, and so on) and the `{id, status, reason, route, content}` response envelope no longer exist; clients need to move to the `/v1` routes and plain JSON responses described in the OpenAPI document.
 
+Behaviour differences worth noting for anyone porting from the old API: errors now use standard HTTP status codes with an `application/problem+json` body instead of a 200 with an in-body status string, so for example `GET /v1/blocks/latest` returns `404` when there is no block yet (the old endpoint returned `204`), and debug peer entries are now JSON objects rather than positional tuples.
+
 Only a couple of routes are ported so far, with more landing in later work:
 
 | Route | Nodes |
