@@ -38,7 +38,6 @@ permissions:
 env:
   # Opt into Node.js 24 for JS actions ahead of GHES runner defaults (checkout, docker helpers, third-party actions).
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  IMAGE_TAG: fleet-node:ci
   TRIVY_SEVERITY: CRITICAL,HIGH
 
 jobs:
@@ -71,24 +70,51 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
-      - name: Build image (linux/amd64)
+      # The miner image is the superset (GPU build plus the X11/xcb donor libs), so its
+      # OS-package CVE surface covers the slim images' shared distroless base. We also scan
+      # one slim image (mempool) to exercise the non-miner path; it reuses the cached builder
+      # layer, so the extra build is cheap.
+      - name: Build miner image (linux/amd64)
         uses: docker/build-push-action@v7
         with:
           context: .
+          target: miner
           push: false
           load: true
-          tags: ${{ env.IMAGE_TAG }}
+          tags: fleet-miner:ci
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Run Trivy (container image)
+      - name: Run Trivy (miner image)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
-          image-ref: ${{ env.IMAGE_TAG }}
+          image-ref: fleet-miner:ci
           severity: ${{ env.TRIVY_SEVERITY }}
           exit-code: "1"
           trivyignores: .trivyignore
           # PEM material in bundled JSON placeholder; TLS not used for this image path (see Dockerfile → /etc/tls_certificates.json).
+          skip-files: /etc/tls_certificates.json
+
+      - name: Build mempool image (slim, linux/amd64)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: mempool
+          push: false
+          load: true
+          tags: fleet-mempool:ci
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Trivy (mempool image)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: fleet-mempool:ci
+          severity: ${{ env.TRIVY_SEVERITY }}
+          exit-code: "1"
+          trivyignores: .trivyignore
           skip-files: /etc/tls_certificates.json
