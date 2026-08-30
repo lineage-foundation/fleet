@@ -92,6 +92,33 @@ To rebuild a single service: `docker compose build mempool-node`. To stop and re
 
 ---
 
+## Configuration overrides
+
+The config files under `.docker/conf/` are baked into the image as defaults (see `Dockerfile`). You don't have to mount a modified copy just to change one value: any config key can be overridden with a `LINEAGE_`-prefixed environment variable. Nested keys are joined with `__`. A few examples:
+
+```
+LINEAGE_MEMPOOL_API_PORT=3005
+LINEAGE_PEER_LIMIT=2000
+LINEAGE_MEMPOOL_UNICORN_FIXED_PARAM__ITERATIONS=2
+```
+
+The peer lists (`mempool_nodes`, `storage_nodes`, `miner_nodes`, `user_nodes`) are arrays in the config files, but as an env var they take a comma-separated address string instead:
+
+```
+LINEAGE_MEMPOOL_NODES=http://a:12300,http://b:12300
+LINEAGE_STORAGE_NODES=http://storage-node:12330
+LINEAGE_MINER_NODES=http://miner-node:12340
+LINEAGE_USER_NODES=http://user-node:12360
+```
+
+Setting one of these fully replaces the corresponding list from the config file; it doesn't merge with it.
+
+Precedence, lowest to highest: built-in defaults, then the config file, then `LINEAGE_*` env vars, then command-line flags where a flag exists for that value.
+
+Because the config files are already in the image, a deployment can set only the `LINEAGE_*` variables it needs and skip mounting any config file at all.
+
+---
+
 ## Building only the container image
 
 Enable [BuildKit](https://docs.docker.com/build/buildkit/) when building locally (`DOCKER_BUILDKIT=1`, the default with Docker Desktop and modern Compose). The root `Dockerfile` uses cache mounts for Cargo registry/git downloads during `cargo chef cook` and `cargo build`, so repeat builds reuse crates across invocations.
