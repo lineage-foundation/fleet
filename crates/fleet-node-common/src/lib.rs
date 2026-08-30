@@ -1,5 +1,5 @@
-use crate::db_utils::{CustomDbSpec, SimpleDb};
-use crate::wallet::WalletDb;
+use fleet_core::db_utils::{CustomDbSpec, SimpleDb};
+use fleet_wallet::WalletDb;
 
 /// Extra params for Node construction
 #[derive(Default)]
