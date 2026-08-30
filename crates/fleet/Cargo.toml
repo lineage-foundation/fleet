@@ -14,6 +14,7 @@ bytes = { version = "1.0.1", features = ["serde"] }
 chrono = "0.4.10"
 clap = "2.33.0"
 config = { version = "0.14", default-features = false, features = ["toml", "json"] }
+fleet-api = { path = "../fleet-api" }
 fleet-core = { path = "../fleet-core" }
 fleet-mempool = { path = "../fleet-mempool" }
 fleet-miner = { path = "../fleet-miner" }

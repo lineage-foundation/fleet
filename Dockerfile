@@ -44,6 +44,8 @@ COPY crates/fleet/Cargo.toml /lineage/crates/fleet/Cargo.toml
 COPY crates/fleet/src /lineage/crates/fleet/src
 COPY crates/fleet-core/Cargo.toml /lineage/crates/fleet-core/Cargo.toml
 COPY crates/fleet-core/src /lineage/crates/fleet-core/src
+COPY crates/fleet-api/Cargo.toml /lineage/crates/fleet-api/Cargo.toml
+COPY crates/fleet-api/src /lineage/crates/fleet-api/src
 COPY crates/fleet-node-common/Cargo.toml /lineage/crates/fleet-node-common/Cargo.toml
 COPY crates/fleet-node-common/src /lineage/crates/fleet-node-common/src
 COPY crates/fleet-wallet/Cargo.toml /lineage/crates/fleet-wallet/Cargo.toml
@@ -71,6 +73,8 @@ COPY crates/fleet/Cargo.toml /lineage/crates/fleet/Cargo.toml
 COPY crates/fleet/src /lineage/crates/fleet/src
 COPY crates/fleet-core/Cargo.toml /lineage/crates/fleet-core/Cargo.toml
 COPY crates/fleet-core/src /lineage/crates/fleet-core/src
+COPY crates/fleet-api/Cargo.toml /lineage/crates/fleet-api/Cargo.toml
+COPY crates/fleet-api/src /lineage/crates/fleet-api/src
 COPY crates/fleet-node-common/Cargo.toml /lineage/crates/fleet-node-common/Cargo.toml
 COPY crates/fleet-node-common/src /lineage/crates/fleet-node-common/src
 COPY crates/fleet-wallet/Cargo.toml /lineage/crates/fleet-wallet/Cargo.toml

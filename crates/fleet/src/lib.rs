@@ -3,7 +3,7 @@
 //! A library for modeling artistic concepts.
 #![allow(dead_code)]
 
-mod api;
+pub use fleet_api as api;
 pub use fleet_node_common as node_params;
 mod pre_launch;
 pub mod test_support;
@@ -20,7 +20,7 @@ pub use fleet_core::{
     threaded_call, tracked_utxo, transactor, unicorn, utils,
 };
 
-pub use api::routes;
+pub use fleet_api::routes;
 pub use fleet_core::SANC_LIST_PROD;
 pub use fleet_core::Rs2JsMsg;
 pub use fleet_core::{MempoolRequest, MinerInterface, Response, StorageInterface};

@@ -1,4 +1,4 @@
-use crate::api::errors::ApiErrorType;
+use crate::errors::ApiErrorType;
 use serde::Serialize;
 use tw_chain::primitives::asset::Asset;
 use warp::hyper::StatusCode;

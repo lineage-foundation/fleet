@@ -3,7 +3,7 @@ use super::{
     handlers::DbgPaths,
     responses::{common_error_reply, json_serialize_embed, CallResponse, JsonReply},
 };
-use crate::utils::{ApiKeys, RoutesPoWInfo, StringError};
+use fleet_core::utils::{ApiKeys, RoutesPoWInfo, StringError};
 use futures::Future;
 use moka::future::{Cache, CacheBuilder};
 use std::convert::Infallible;

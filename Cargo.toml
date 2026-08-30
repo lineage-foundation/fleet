@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/fleet", "crates/fleet-core", "crates/fleet-mempool", "crates/fleet-miner", "crates/fleet-node-common", "crates/fleet-storage", "crates/fleet-user", "crates/fleet-wallet"]
+members = ["crates/fleet", "crates/fleet-api", "crates/fleet-core", "crates/fleet-mempool", "crates/fleet-miner", "crates/fleet-node-common", "crates/fleet-storage", "crates/fleet-user", "crates/fleet-wallet"]
 resolver = "2"
 
 # Faster dev links on Linux and macOS (ignored on platforms that do not support it).
