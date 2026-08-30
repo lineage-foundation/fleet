@@ -1,28 +1,28 @@
 //! Test suite for the network functions.
 
-use crate::configurations::{
+use fleet::configurations::{
     MempoolNodeSharedConfig, MinerWhitelist, TxOutSpec, UserAutoGenTxSetup, UtxoSetSpec,
     WalletTxSpec,
 };
-use crate::constants::{NETWORK_VERSION, SANC_LIST_TEST};
-use crate::interfaces::{
+use fleet::constants::{NETWORK_VERSION, SANC_LIST_TEST};
+use fleet::interfaces::{
     BlockStoredInfo, BlockchainItem, BlockchainItemMeta, BlockchainItemType, CommonBlockInfo,
     DruidPool, MempoolApi, MempoolRequest, MinedBlock, MinedBlockExtraInfo, Response,
     StorageRequest, StoredSerializingBlock, UserApiRequest, UserRequest, UtxoFetchType, UtxoSet,
     WinningPoWInfo,
 };
-use crate::mempool::MempoolNode;
-use crate::miner::MinerNode;
-use crate::storage::{all_ordered_stored_block_tx_hashes, StorageNode};
-use crate::storage_raft::CompleteBlock;
-use crate::test_utils::{
+use fleet::mempool::MempoolNode;
+use fleet::miner::MinerNode;
+use fleet::storage::{all_ordered_stored_block_tx_hashes, StorageNode};
+use fleet::storage_raft::CompleteBlock;
+use fleet::test_utils::{
     generate_rb_transactions, get_test_tls_spec, map_items, node_join_all_checked,
     remove_all_node_dbs, Network, NetworkConfig, NodeType, RbReceiverData, RbSenderData,
 };
-use crate::tracked_utxo::TrackedUtxoBalance;
-use crate::transactor::Transactor;
-use crate::user::UserNode;
-use crate::utils::{
+use fleet::tracked_utxo::TrackedUtxoBalance;
+use fleet::transactor::Transactor;
+use fleet::user::UserNode;
+use fleet::utils::{
     apply_mining_tx, calculate_reward, construct_coinbase_tx, construct_valid_block_pow_hash,
     create_valid_transaction_with_ins_outs, decode_pub_key, decode_secret_key,
     generate_pow_for_block, get_sanction_addresses, tracing_log_try_init, LocalEvent, StringError,
@@ -1961,7 +1961,7 @@ async fn gen_transactions_common(
         let transactions = user_process_mining_notified(&mut network, "user1").await;
         mempool_handle_event(&mut network, "mempool1", &["Transactions added to tx pool"]).await;
         mempool_handle_event(&mut network, "mempool1", &["Transactions committed"]).await;
-        let committed = crate::test_utils::mempool_committed_tx_pool(&mut network, "mempool1").await;
+        let committed = fleet::test_utils::mempool_committed_tx_pool(&mut network, "mempool1").await;
 
         tx_expected.push(transactions.unwrap());
         tx_committed.push(committed);
@@ -4003,7 +4003,7 @@ async fn mempool_all_committed_tx_pool(
 ) -> Vec<BTreeMap<String, Transaction>> {
     let mut result = Vec::new();
     for name in mempool_group {
-        let r = crate::test_utils::mempool_committed_tx_pool(network, name).await;
+        let r = fleet::test_utils::mempool_committed_tx_pool(network, name).await;
         result.push(r);
     }
     result
@@ -4601,7 +4601,7 @@ async fn user_send_request_utxo_set(
     u.send_request_utxo_set(
         address_list,
         mempool_addr,
-        crate::interfaces::NodeType::User,
+        fleet::interfaces::NodeType::User,
     )
     .await
     .unwrap();

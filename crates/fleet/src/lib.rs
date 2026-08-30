@@ -8,8 +8,6 @@ pub use fleet_node_common as node_params;
 mod pre_launch;
 pub mod test_support;
 pub mod test_utils;
-#[cfg(test)]
-mod tests;
 pub mod upgrade;
 pub use fleet_wallet as wallet;
 

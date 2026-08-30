@@ -44,6 +44,8 @@ FROM chef AS planner
 COPY Cargo.toml Cargo.lock /lineage/
 COPY crates/fleet/Cargo.toml /lineage/crates/fleet/Cargo.toml
 COPY crates/fleet/src /lineage/crates/fleet/src
+COPY crates/fleet-integration/Cargo.toml /lineage/crates/fleet-integration/Cargo.toml
+COPY crates/fleet-integration/src /lineage/crates/fleet-integration/src
 COPY crates/fleet-core/Cargo.toml /lineage/crates/fleet-core/Cargo.toml
 COPY crates/fleet-core/src /lineage/crates/fleet-core/src
 COPY crates/fleet-api/Cargo.toml /lineage/crates/fleet-api/Cargo.toml
@@ -83,6 +85,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 COPY Cargo.toml Cargo.lock /lineage/
 COPY crates/fleet/Cargo.toml /lineage/crates/fleet/Cargo.toml
 COPY crates/fleet/src /lineage/crates/fleet/src
+COPY crates/fleet-integration/Cargo.toml /lineage/crates/fleet-integration/Cargo.toml
+COPY crates/fleet-integration/src /lineage/crates/fleet-integration/src
 COPY crates/fleet-core/Cargo.toml /lineage/crates/fleet-core/Cargo.toml
 COPY crates/fleet-core/src /lineage/crates/fleet-core/src
 COPY crates/fleet-api/Cargo.toml /lineage/crates/fleet-api/Cargo.toml
