@@ -6,7 +6,7 @@ use fleet_core::{
     get_sanction_addresses, loop_wait_connnect_to_peers_async, loops_re_connect_disconnect,
     shutdown_connections, ResponseResult, SANC_LIST_PROD,
 };
-use fleet_api::routes;
+use fleet_api::ApiState;
 use clap::{App, Arg, ArgMatches};
 use config::ConfigError;
 use std::net::SocketAddr;
@@ -60,33 +60,49 @@ async fn run_node(matches: &ArgMatches<'_>) {
         })
     };
 
-    // Warp API
-    let warp_handle = tokio::spawn({
+    // REST API
+    let api_handle = tokio::spawn({
         let (api_addr, api_tls, api_keys, routes_pow, peer) = api_inputs;
         let threaded_calls_tx = threaded_calls_tx;
 
-        info!("Warp API started on port {:?}", api_addr.port());
+        info!("REST API started on port {:?}", api_addr.port());
         info!("");
 
         let mut bind_address = "0.0.0.0:0".parse::<SocketAddr>().unwrap();
         bind_address.set_port(api_addr.port());
 
         async move {
-            let serve = warp::serve(routes::mempool_node_routes(
+            let app = fleet_api::mempool_router(ApiState::mempool(
+                peer,
+                threaded_calls_tx,
                 api_keys,
                 routes_pow,
-                threaded_calls_tx,
-                peer,
             ));
+
             if let Some(api_tls) = api_tls {
-                serve
-                    .tls()
-                    .key(&api_tls.pem_pkcs8_private_keys)
-                    .cert(&api_tls.pem_certs)
-                    .run(bind_address)
-                    .await;
-            } else {
-                serve.run(bind_address).await;
+                let config = match axum_server::tls_rustls::RustlsConfig::from_pem(
+                    api_tls.pem_certs.into_bytes(),
+                    api_tls.pem_pkcs8_private_keys.into_bytes(),
+                )
+                .await
+                {
+                    Ok(config) => config,
+                    Err(e) => {
+                        tracing::error!("Failed to load TLS config for REST API: {e:?}");
+                        return;
+                    }
+                };
+                if let Err(e) = axum_server::bind_rustls(bind_address, config)
+                    .serve(app.into_make_service())
+                    .await
+                {
+                    tracing::error!("REST API server error: {e:?}");
+                }
+            } else if let Err(e) = axum_server::bind(bind_address)
+                .serve(app.into_make_service())
+                .await
+            {
+                tracing::error!("REST API server error: {e:?}");
             }
         }
     });
@@ -113,15 +129,15 @@ async fn run_node(matches: &ArgMatches<'_>) {
         }
     });
 
-    let (main, warp, raft, conn, disconn) = tokio::join!(
+    let (main, api, raft, conn, disconn) = tokio::join!(
         main_loop_handle,
-        warp_handle,
+        api_handle,
         raft_loop_handle,
         conn_loop_handle,
         disconn_loop_handle
     );
     main.unwrap();
-    warp.unwrap();
+    api.unwrap();
     raft.unwrap();
     conn.unwrap();
     disconn.unwrap();

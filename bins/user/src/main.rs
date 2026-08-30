@@ -6,7 +6,7 @@ use fleet_core::{
     loop_wait_connnect_to_peers_async, loops_re_connect_disconnect, shutdown_connections,
     ResponseResult,
 };
-use fleet_api::routes;
+use fleet_api::ApiState;
 use fleet_user::UserNode;
 use clap::{App, Arg, ArgMatches};
 use config::{ConfigError, Value};
@@ -86,34 +86,50 @@ async fn run_node(matches: &ArgMatches<'_>) {
         }
     });
 
-    // Warp API
-    let warp_handle = tokio::spawn({
+    // REST API
+    let api_handle = tokio::spawn({
         let (db, node, api_addr, api_tls, api_keys, api_pow_info) = api_inputs;
         let threaded_calls_tx = threaded_calls_tx.clone();
 
-        info!("Warp API started on port {:?}", api_addr.port());
+        info!("REST API started on port {:?}", api_addr.port());
         info!("");
 
         let mut bind_address = "0.0.0.0:0".parse::<SocketAddr>().unwrap();
         bind_address.set_port(api_addr.port());
 
         async move {
-            let serve = warp::serve(routes::user_node_routes(
+            let app = fleet_api::user_router(ApiState::user(
+                node,
+                db.db_arc(),
+                threaded_calls_tx,
                 api_keys,
                 api_pow_info,
-                db,
-                node,
-                threaded_calls_tx,
             ));
+
             if let Some(api_tls) = api_tls {
-                serve
-                    .tls()
-                    .key(&api_tls.pem_pkcs8_private_keys)
-                    .cert(&api_tls.pem_certs)
-                    .run(bind_address)
-                    .await;
-            } else {
-                serve.run(bind_address).await;
+                let config = match axum_server::tls_rustls::RustlsConfig::from_pem(
+                    api_tls.pem_certs.into_bytes(),
+                    api_tls.pem_pkcs8_private_keys.into_bytes(),
+                )
+                .await
+                {
+                    Ok(config) => config,
+                    Err(e) => {
+                        tracing::error!("Failed to load TLS config for REST API: {e:?}");
+                        return;
+                    }
+                };
+                if let Err(e) = axum_server::bind_rustls(bind_address, config)
+                    .serve(app.into_make_service())
+                    .await
+                {
+                    tracing::error!("REST API server error: {e:?}");
+                }
+            } else if let Err(e) = axum_server::bind(bind_address)
+                .serve(app.into_make_service())
+                .await
+            {
+                tracing::error!("REST API server error: {e:?}");
             }
         }
     });
@@ -137,15 +153,15 @@ async fn run_node(matches: &ArgMatches<'_>) {
         }
     });
 
-    let (main_result, warp_result, conn, disconn, update_result) = tokio::join!(
+    let (main_result, api_result, conn, disconn, update_result) = tokio::join!(
         main_loop_handle,
-        warp_handle,
+        api_handle,
         conn_loop_handle,
         disconn_loop_handle,
         update_handle
     );
     main_result.unwrap();
-    warp_result.unwrap();
+    api_result.unwrap();
     conn.unwrap();
     disconn.unwrap();
     update_result.unwrap();

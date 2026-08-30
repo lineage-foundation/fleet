@@ -113,6 +113,12 @@ impl ApiState {
         }
     }
 
+    /// State for a standalone miner node (no embedded user node): no DB, no
+    /// threaded-call sender, no aux node.
+    pub fn miner_solo(node: Node, api_keys: ApiKeys, routes_pow: RoutesPoWInfo) -> Self {
+        Self::bare(node, api_keys, routes_pow)
+    }
+
     /// State for a pre-launch node: no DB, no threaded-call sender.
     pub fn pre_launch(node: Node, api_keys: ApiKeys, routes_pow: RoutesPoWInfo) -> Self {
         Self::bare(node, api_keys, routes_pow)

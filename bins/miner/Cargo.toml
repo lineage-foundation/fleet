@@ -13,12 +13,13 @@ fleet-user = { path = "../../crates/fleet-user" }
 fleet-api = { path = "../../crates/fleet-api" }
 fleet-core = { path = "../../crates/fleet-core" }
 fleet-node-common = { path = "../../crates/fleet-node-common" }
+axum = "0.8.9"
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 clap = "2.33.0"
 config = { version = "0.14", default-features = false, features = ["toml", "json"] }
 tokio = { version = "1.7.1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1.40"
 tracing-subscriber = "0.2.3"
-warp = { version = "0.3.7", features = ["tls"] }
 
 [features]
 gpu = ["fleet-miner/gpu"]

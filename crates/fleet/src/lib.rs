@@ -19,7 +19,6 @@ pub use fleet_core::{
     threaded_call, tracked_utxo, transactor, unicorn, utils,
 };
 
-pub use fleet_api::routes;
 pub use fleet_core::SANC_LIST_PROD;
 pub use fleet_core::Rs2JsMsg;
 pub use fleet_core::{MempoolRequest, MinerInterface, Response, StorageInterface};
