@@ -997,6 +997,7 @@ dependencies = [
  "fleet-user",
  "fleet-wallet",
  "hex",
+ "http-body-util",
  "moka",
  "serde",
  "serde_json",

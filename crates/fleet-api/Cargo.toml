@@ -24,3 +24,4 @@ utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
 [dev-dependencies]
 fleet-storage = { path = "../fleet-storage" }
 fleet-user = { path = "../fleet-user" }
+http-body-util = "0.1"
