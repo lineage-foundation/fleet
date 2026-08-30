@@ -43,11 +43,11 @@ sudo apt-get update && sudo apt-get install -y \
   libxcursor-dev libxi-dev
 ```
 
-For day-to-day work, `cargo build --release`, `cargo test`, and IDE integration work as usual. For a multi-node local stack, prefer Docker Compose (next section); it mirrors the hardened runtime and pinned base images CI uses.
+For day-to-day work, `cargo build --release`, `cargo test`, and IDE integration work as usual. `cargo build --release` produces one binary per node type under `target/release/`: `mempool`, `storage`, `miner`, `user`, and `pre_launch` (plus the `upgrade` helper). Run one directly, for example `target/release/storage --config=...`, instead of the old `node <subcommand>` dispatcher. For a multi-node local stack, prefer Docker Compose (next section); it mirrors the hardened runtime and pinned base images CI uses.
 
 ### Native vs Docker workflows
 
-A native build (Linux or macOS host) is usually the fastest edit-compile loop: Cargo reuses incremental artifacts, and you avoid image layer rebuilds. You install the toolchain and system libraries yourself (see the Ubuntu package list above; other distros need equivalent GLFW/X11 and LLVM packages). The GPU miner backends (Vulkan/OpenGL) are behind an off-by-default `gpu` Cargo feature, so a plain `cargo build` is CPU-only and does not need the Vulkan/OpenGL/GLFW crates or their X11 system libraries. Build the miner with GPU acceleration via `cargo build --release --features gpu`; the Docker image already does this.
+A native build (Linux or macOS host) is usually the fastest edit-compile loop: Cargo reuses incremental artifacts, and you avoid image layer rebuilds. You install the toolchain and system libraries yourself (see the Ubuntu package list above; other distros need equivalent GLFW/X11 and LLVM packages). The GPU miner backends (Vulkan/OpenGL) are behind an off-by-default `gpu` Cargo feature on the `miner` binary crate, so a plain `cargo build` is CPU-only and does not need the Vulkan/OpenGL/GLFW crates or their X11 system libraries; `mempool`, `storage`, `user`, and `pre_launch` never pull those in regardless of features. Build the miner with GPU acceleration via `cargo build --release -p miner --features gpu`; the Docker `miner` image already does this.
 
 Docker and Compose have a higher cold-start cost (image build, large contexts without cache) but reproduce CI's pinned bases, distroless runtime, and Compose network layout. Most of the caching benefit lands on the dependency and toolchain layers. Enable [BuildKit](https://docs.docker.com/build/buildkit/) so the `Dockerfile` cache mounts apply (`DOCKER_BUILDKIT=1`, or a recent Docker Desktop where it is the default). See [Building only the container image](#building-only-the-container-image) for details.
 
@@ -65,7 +65,7 @@ Defaults:
 
 | Item | Behaviour |
 |------|-----------|
-| Build | `fleet-node:local`, same `Dockerfile` as CI |
+| Build | Same `Dockerfile` as CI, one target per node: `fleet-mempool:local`, `fleet-storage:local`, `fleet-miner:local` (the miner target additionally carries the GPU/X11 runtime) |
 | Platform | `linux/amd64` (set `FLEET_COMPOSE_PLATFORM=linux/arm64` for native Apple Silicon builds) |
 | Writable DB | Per-service `/src` backed by a tmpfs named volume (`uid=65532`, distroless nonroot); reset with `docker compose down -v` after changing volumes |
 | Config | One bind mount from the host: `./.docker/conf/node_settings.toml` → `/etc/node_settings.toml` (override the path with `NODE_SETTINGS`) |
@@ -96,13 +96,16 @@ To rebuild a single service: `docker compose build mempool-node`. To stop and re
 
 Enable [BuildKit](https://docs.docker.com/build/buildkit/) when building locally (`DOCKER_BUILDKIT=1`, the default with Docker Desktop and modern Compose). The root `Dockerfile` uses cache mounts for Cargo registry/git downloads during `cargo chef cook` and `cargo build`, so repeat builds reuse crates across invocations.
 
+The `Dockerfile` builds a separate final stage per node type, selected with `--target`: `mempool`, `storage`, `user`, `pre_launch`, and `miner`.
+
 ```bash
-DOCKER_BUILDKIT=1 docker build -t fleet-node:local --platform linux/amd64 .
+DOCKER_BUILDKIT=1 docker build --target mempool -t fleet-mempool:local --platform linux/amd64 .
+DOCKER_BUILDKIT=1 docker build --target miner -t fleet-miner:local --platform linux/amd64 .
 ```
 
 CI ([`.github/workflows/trivy.yml`](.github/workflows/trivy.yml)) builds the same `Dockerfile` with BuildKit via `docker/build-push-action` and the GitHub Actions cache (`cache-from` / `cache-to`), so repeat pipeline runs reuse layers across commits. Locally, the Dockerfile's `RUN --mount=type=cache` targets complement that when BuildKit is enabled.
 
-The final stage runs as `nonroot`, and the shipped binary is `/lineage/lineage` (distroless `cc-debian13`, digest-pinned, plus X11 runtime `.so` files copied from `debian:trixie-slim` so glibc matches the distroless Debian 13 base). See the `Dockerfile` for the exact `FROM` digests.
+Each final stage runs as `nonroot` on distroless `cc-debian13` (digest-pinned) and ships a single fixed-entrypoint binary: `/lineage/mempool`, `/lineage/storage`, `/lineage/user`, `/lineage/pre_launch`, or `/lineage/miner`. Only the `miner` target additionally copies X11 runtime `.so` files from `debian:trixie-slim` (so glibc matches the distroless Debian 13 base), since it is the only one built with the GPU feature; the other targets are slim, GPU-free images. See the `Dockerfile` for the exact `FROM` digests.
 
 ---
 
@@ -145,7 +148,7 @@ Branch names are up to you; what matters for history and releases is consistent 
 Workflow [`.github/workflows/trivy.yml`](.github/workflows/trivy.yml) runs:
 
 - `trivy fs` for vulnerabilities and misconfiguration on the repository (respects [.trivyignore](.trivyignore)),
-- `trivy image` for vulnerabilities on the freshly built `fleet-node:ci` image.
+- `trivy image` for vulnerabilities on the freshly built per-node images (`fleet-miner:ci` and the slim `fleet-mempool:ci`).
 
 Pull requests that touch `Dockerfile`, Compose, Cargo, `.docker/`, `.trivyignore`, or the workflow itself gate on severity `CRITICAL` and `HIGH` (see `env.TRIVY_SEVERITY` in the workflow).
 

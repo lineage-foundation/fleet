@@ -8,6 +8,7 @@ pub mod asert;
 pub mod block_pipeline;
 pub mod bounded_hash_set;
 pub mod comms_handler;
+pub mod config_load;
 pub mod configurations;
 pub mod constants;
 pub mod db_utils;

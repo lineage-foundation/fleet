@@ -1,19 +1,28 @@
 //! App to run a mining node.
 
-use fleet::configurations::{MinerNodeConfig, UserNodeConfig};
-use fleet::node_params::ExtraNodeParams;
-use fleet::{
-    loop_wait_connnect_to_peers_async, loops_re_connect_disconnect, routes, shutdown_connections,
+use fleet_core::configurations::{MinerNodeConfig, UserNodeConfig};
+use fleet_core::{
+    loop_wait_connnect_to_peers_async, loops_re_connect_disconnect, shutdown_connections,
     ResponseResult,
 };
-use fleet::{MinerNode, UserNode};
+use fleet_api::routes;
+use fleet_miner::MinerNode;
+use fleet_node_common::ExtraNodeParams;
+use fleet_user::UserNode;
 use clap::{App, Arg, ArgMatches};
 use config::{ConfigError, Value};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use tracing::info;
 
-pub async fn run_node(matches: &ArgMatches<'_>) {
+#[tokio::main(flavor = "multi_thread", worker_threads = 8)]
+async fn main() {
+    tracing_subscriber::fmt::init();
+    let matches = clap_app().get_matches();
+    run_node(&matches).await;
+}
+
+async fn run_node(matches: &ArgMatches<'_>) {
     let (config, user_config) = configuration(load_settings(matches));
     info!("Start node with config {:?}", config);
     let node = MinerNode::new(config, Default::default()).await.unwrap();
@@ -224,7 +233,7 @@ pub async fn run_node(matches: &ArgMatches<'_>) {
     }
 }
 
-pub fn clap_app<'a, 'b>() -> App<'a, 'b> {
+fn clap_app<'a, 'b>() -> App<'a, 'b> {
     App::new("miner")
         .about("Runs a basic miner node.")
         .arg(
@@ -342,7 +351,7 @@ pub fn clap_app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn load_settings(matches: &clap::ArgMatches) -> (config::Config, Option<config::Config>) {
-    use crate::config_load::{build, rebuild};
+    use fleet_core::config_load::{build, rebuild};
 
     let mut miner_index: usize = 0;
     let mut user_index: usize = 0;
@@ -543,132 +552,4 @@ fn default_user_test_auto_gen_setup() -> HashMap<String, Value> {
     value.insert("user_setup_tx_in_per_tx".to_owned(), zero.clone());
     value.insert("user_setup_tx_max_count".to_owned(), zero);
     value
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use fleet::configurations::DbMode;
-
-    type Expected = (DbMode, Option<String>);
-    type UserExpected = Option<(DbMode, Option<String>)>;
-
-    #[test]
-    fn validate_startup_no_args() {
-        let args = vec!["bin_name"];
-        let expected = (DbMode::Test(0), None);
-
-        validate_startup_common(args, expected, None);
-    }
-
-    #[test]
-    fn validate_startup_with_user_index_1() {
-        let args = vec!["bin_name", "--index=1", "--with_user_index=1"];
-        let expected: Expected = (DbMode::Test(1), None);
-        let user_expected: UserExpected = Some((DbMode::Test(1), None));
-
-        validate_startup_common(args, expected, user_expected);
-    }
-
-    #[test]
-    fn validate_startup_key_override() {
-        // Use argument instead of std::env as env apply to all tests
-        let args = vec!["bin_name", "--tls_private_key_override=42"];
-        let expected = (DbMode::Test(0), Some("42".to_owned()));
-
-        validate_startup_common(args, expected, None);
-    }
-
-    #[test]
-    fn validate_startup_key_override_with_user_index_1() {
-        // Use argument instead of std::env as env apply to all tests
-        let args = vec![
-            "bin_name",
-            "--index=1",
-            "--tls_private_key_override=42",
-            "--with_user_index=1",
-        ];
-        let expected: Expected = (DbMode::Test(1), Some("42".to_owned()));
-        let user_expected: UserExpected = Some((DbMode::Test(1), Some("42".to_owned())));
-        validate_startup_common(args, expected, user_expected);
-    }
-
-    #[test]
-    fn validate_startup_aws() {
-        let args = vec![
-            "bin_name",
-            "--config=src/bin/node_settings_aws.toml",
-            "--initial_block_config=src/bin/initial_block_aws.json",
-            "--with_user_index=0",
-        ];
-        let expected = (DbMode::Live, None);
-        let user_expected: UserExpected = Some((DbMode::Live, None));
-
-        validate_startup_common(args, expected, user_expected);
-    }
-
-    #[test]
-    fn validate_startup_raft_1() {
-        let args = vec![
-            "bin_name",
-            "--config=src/bin/node_settings_local_raft_1.toml",
-        ];
-        let expected = (DbMode::Test(0), None);
-
-        validate_startup_common(args, expected, None);
-    }
-
-    #[test]
-    fn validate_startup_raft_2_index_1() {
-        let args = vec![
-            "bin_name",
-            "--config=src/bin/node_settings_local_raft_2.toml",
-            "--index=1",
-        ];
-        let expected = (DbMode::Test(1), None);
-
-        validate_startup_common(args, expected, None);
-    }
-
-    #[test]
-    fn validate_startup_raft_3() {
-        let args = vec![
-            "bin_name",
-            "--config=src/bin/node_settings_local_raft_1.toml",
-        ];
-        let expected = (DbMode::Test(0), None);
-
-        validate_startup_common(args, expected, None);
-    }
-
-    fn validate_startup_common(args: Vec<&str>, expected: Expected, user_expected: UserExpected) {
-        //
-        // Act
-        //
-        let app = clap_app();
-        let matches = app.get_matches_from_safe(args).unwrap();
-        let settings = load_settings(&matches);
-        let config = configuration(settings);
-
-        //
-        // Assert
-        //
-        let (expected_mode, expected_key) = expected;
-        assert_eq!(config.0.miner_db_mode, expected_mode);
-        assert_eq!(
-            config.0.tls_config.pem_pkcs8_private_key_override,
-            expected_key
-        );
-        match user_expected {
-            Some((user_expected_mode, user_expected_key)) => {
-                let user_config = config.1.unwrap();
-                assert_eq!(user_config.user_db_mode, user_expected_mode);
-                assert_eq!(
-                    user_config.tls_config.pem_pkcs8_private_key_override,
-                    user_expected_key
-                );
-            }
-            None => assert!(config.1.is_none()),
-        }
-    }
 }

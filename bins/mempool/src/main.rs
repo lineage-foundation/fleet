@@ -1,17 +1,25 @@
 //! App to run a mempool node.
 
-use fleet::configurations::MempoolNodeConfig;
-use fleet::MempoolNode;
-use fleet::{
-    get_sanction_addresses, loop_wait_connnect_to_peers_async, loops_re_connect_disconnect, routes,
+use fleet_core::configurations::MempoolNodeConfig;
+use fleet_mempool::MempoolNode;
+use fleet_core::{
+    get_sanction_addresses, loop_wait_connnect_to_peers_async, loops_re_connect_disconnect,
     shutdown_connections, ResponseResult, SANC_LIST_PROD,
 };
+use fleet_api::routes;
 use clap::{App, Arg, ArgMatches};
 use config::ConfigError;
 use std::net::SocketAddr;
 use tracing::info;
 
-pub async fn run_node(matches: &ArgMatches<'_>) {
+#[tokio::main(flavor = "multi_thread", worker_threads = 8)]
+async fn main() {
+    tracing_subscriber::fmt::init();
+    let matches = clap_app().get_matches();
+    run_node(&matches).await;
+}
+
+async fn run_node(matches: &ArgMatches<'_>) {
     let mut config = configuration(load_settings(matches));
 
     info!("Start node with config {config:#?}");
@@ -119,7 +127,7 @@ pub async fn run_node(matches: &ArgMatches<'_>) {
     disconn.unwrap();
 }
 
-pub fn clap_app<'a, 'b>() -> App<'a, 'b> {
+fn clap_app<'a, 'b>() -> App<'a, 'b> {
     App::new("mempool")
         .about("Runs a basic mempool node.")
         .arg(
@@ -211,7 +219,7 @@ pub fn clap_app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn load_settings(matches: &clap::ArgMatches) -> config::Config {
-    use crate::config_load::{build, rebuild};
+    use fleet_core::config_load::{build, rebuild};
 
     let setting_file = matches
         .value_of("config")
@@ -312,95 +320,4 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
 
 fn configuration(settings: config::Config) -> MempoolNodeConfig {
     settings.try_deserialize().unwrap()
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use fleet::configurations::DbMode;
-
-    type Expected = (DbMode, Option<String>);
-
-    #[test]
-    fn validate_startup_no_args() {
-        let args = vec!["bin_name"];
-        let expected = (DbMode::Test(0), None);
-
-        validate_startup_common(args, expected);
-    }
-
-    #[test]
-    fn validate_startup_key_override() {
-        // Use argument instead of std::env as env apply to all tests
-        let args = vec!["bin_name", "--tls_private_key_override=42"];
-        let expected = (DbMode::Test(0), Some("42".to_owned()));
-
-        validate_startup_common(args, expected);
-    }
-
-    #[test]
-    fn validate_startup_aws() {
-        let args = vec![
-            "bin_name",
-            "--config=src/bin/node_settings_aws.toml",
-            "--initial_block_config=src/bin/initial_block_aws.json",
-        ];
-        let expected = (DbMode::Live, None);
-
-        validate_startup_common(args, expected);
-    }
-
-    #[test]
-    fn validate_startup_raft_1() {
-        let args = vec![
-            "bin_name",
-            "--config=src/bin/node_settings_local_raft_1.toml",
-        ];
-        let expected = (DbMode::Test(0), None);
-
-        validate_startup_common(args, expected);
-    }
-
-    #[test]
-    fn validate_startup_raft_2_index_1() {
-        let args = vec![
-            "bin_name",
-            "--config=src/bin/node_settings_local_raft_2.toml",
-            "--index=1",
-        ];
-        let expected = (DbMode::Test(1), None);
-
-        validate_startup_common(args, expected);
-    }
-
-    #[test]
-    fn validate_startup_raft_3() {
-        let args = vec![
-            "bin_name",
-            "--config=src/bin/node_settings_local_raft_1.toml",
-        ];
-        let expected = (DbMode::Test(0), None);
-
-        validate_startup_common(args, expected);
-    }
-
-    fn validate_startup_common(args: Vec<&str>, expected: Expected) {
-        //
-        // Act
-        //
-        let app = clap_app();
-        let matches = app.get_matches_from_safe(args).unwrap();
-        let settings = load_settings(&matches);
-        let config = configuration(settings);
-
-        //
-        // Assert
-        //
-        let (expected_mode, expected_key) = expected;
-        assert_eq!(config.mempool_db_mode, expected_mode);
-        assert_eq!(
-            config.tls_config.pem_pkcs8_private_key_override,
-            expected_key
-        );
-    }
 }

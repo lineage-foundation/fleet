@@ -824,6 +824,7 @@ dependencies = [
  "protobuf",
  "raft",
  "rand 0.7.3",
+ "regex",
  "ring 0.16.20",
  "rocksdb",
  "rug",
@@ -1754,6 +1755,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mempool"
+version = "1.1.2"
+dependencies = [
+ "clap",
+ "config",
+ "fleet-api",
+ "fleet-core",
+ "fleet-mempool",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "warp",
+]
+
+[[package]]
 name = "merkle-log"
 version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1808,6 +1824,23 @@ checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
 dependencies = [
  "mime",
  "unicase",
+]
+
+[[package]]
+name = "miner"
+version = "1.1.2"
+dependencies = [
+ "clap",
+ "config",
+ "fleet-api",
+ "fleet-core",
+ "fleet-miner",
+ "fleet-node-common",
+ "fleet-user",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "warp",
 ]
 
 [[package]]
@@ -2087,6 +2120,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
+]
+
+[[package]]
+name = "pre_launch"
+version = "1.1.2"
+dependencies = [
+ "clap",
+ "config",
+ "fleet",
+ "fleet-core",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2742,6 +2788,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
+name = "storage"
+version = "1.1.2"
+dependencies = [
+ "clap",
+ "config",
+ "fleet-api",
+ "fleet-core",
+ "fleet-storage",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "warp",
+]
+
+[[package]]
 name = "strsim"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3319,6 +3380,21 @@ dependencies = [
  "idna 1.1.0",
  "percent-encoding",
  "serde",
+]
+
+[[package]]
+name = "user"
+version = "1.1.2"
+dependencies = [
+ "clap",
+ "config",
+ "fleet-api",
+ "fleet-core",
+ "fleet-user",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "warp",
 ]
 
 [[package]]

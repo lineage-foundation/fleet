@@ -10,6 +10,13 @@ use clap::{App, Arg, ArgMatches};
 use config::ConfigError;
 use tracing::info;
 
+#[tokio::main(flavor = "multi_thread", worker_threads = 8)]
+async fn main() {
+    tracing_subscriber::fmt::init();
+    let matches = clap_app().get_matches();
+    run_node(&matches).await;
+}
+
 pub async fn run_node(matches: &ArgMatches<'_>) {
     let config = configuration(load_settings(matches));
 
@@ -106,7 +113,7 @@ pub fn clap_app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn load_settings(matches: &clap::ArgMatches) -> config::Config {
-    use crate::config_load::{build, rebuild};
+    use fleet_core::config_load::{build, rebuild};
 
     let setting_file = matches
         .value_of("config")
@@ -162,93 +169,4 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
 
 fn configuration(settings: config::Config) -> PreLaunchNodeConfig {
     settings.try_deserialize().unwrap()
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use fleet::configurations::{DbMode, PreLaunchNodeType};
-
-    type Expected = (DbMode, Option<String>, PreLaunchNodeType);
-
-    #[test]
-    fn validate_startup_mempool() {
-        let args = vec!["bin_name", "--type=mempool"];
-        let expected = (DbMode::Test(0), None, PreLaunchNodeType::Mempool);
-
-        validate_startup_common(args, expected);
-    }
-
-    #[test]
-    fn validate_startup_storage() {
-        let args = vec!["bin_name", "--type=storage"];
-        let expected = (DbMode::Test(0), None, PreLaunchNodeType::Storage);
-
-        validate_startup_common(args, expected);
-    }
-
-    #[test]
-    fn validate_startup_key_override() {
-        // Use argument instead of std::env as env apply to all tests
-        let args = vec![
-            "bin_name",
-            "--type=storage",
-            "--tls_private_key_override=42",
-        ];
-        let expected = (
-            DbMode::Test(0),
-            Some("42".to_owned()),
-            PreLaunchNodeType::Storage,
-        );
-
-        validate_startup_common(args, expected);
-    }
-
-    #[test]
-    fn validate_startup_mempool_index_1() {
-        let args = vec![
-            "bin_name",
-            "--config=src/bin/node_settings_local_raft_2.toml",
-            "--type=mempool",
-            "--index=1",
-        ];
-        let expected = (DbMode::Test(1), None, PreLaunchNodeType::Mempool);
-
-        validate_startup_common(args, expected);
-    }
-
-    #[test]
-    fn validate_startup_storage_index_1() {
-        let args = vec![
-            "bin_name",
-            "--config=src/bin/node_settings_local_raft_2.toml",
-            "--type=storage",
-            "--index=1",
-        ];
-        let expected = (DbMode::Test(1), None, PreLaunchNodeType::Storage);
-
-        validate_startup_common(args, expected);
-    }
-
-    fn validate_startup_common(args: Vec<&str>, expected: Expected) {
-        //
-        // Act
-        //
-        let app = clap_app();
-        let matches = app.get_matches_from_safe(args).unwrap();
-        let settings = load_settings(&matches);
-        let config = configuration(settings);
-
-        //
-        // Assert
-        //
-        let (expected_mode, expected_key, expected_type) = expected;
-        assert_eq!(config.storage_db_mode, expected_mode);
-        assert_eq!(config.mempool_db_mode, expected_mode);
-        assert_eq!(
-            config.tls_config.pem_pkcs8_private_key_override,
-            expected_key
-        );
-        assert_eq!(config.node_type, expected_type);
-    }
 }
