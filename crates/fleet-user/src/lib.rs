@@ -13,9 +13,9 @@ use fleet_core::threaded_call::{ThreadedCallChannel, ThreadedCallSender};
 use crate::transaction_gen::{PendingMap, TransactionGen};
 use fleet_core::transactor::Transactor;
 use fleet_core::utils::{
-    create_socket_addr, generate_half_druid, get_payments_for_wallet_from_utxo, to_api_keys,
-    to_route_pow_infos, try_send_to_ui, ApiKeys, LocalEvent, LocalEventChannel, LocalEventSender,
-    ResponseResult, RoutesPoWInfo,
+    create_socket_addr, decode_pub_key, decode_secret_key, generate_half_druid,
+    get_payments_for_wallet_from_utxo, to_api_keys, to_route_pow_infos, try_send_to_ui, ApiKeys,
+    LocalEvent, LocalEventChannel, LocalEventSender, ResponseResult, RoutesPoWInfo,
 };
 use fleet_wallet::{AddressStore, WalletDb, WalletDbError};
 use fleet_core::Rs2JsMsg;
@@ -24,14 +24,18 @@ use bincode::deserialize;
 use bytes::Bytes;
 use serde::Serialize;
 use std::collections::BTreeSet;
+use tw_chain::crypto::sign_ed25519 as sign;
 use tw_chain::primitives::asset::{Asset, TokenAmount};
 use tw_chain::primitives::block::Block;
 use tw_chain::primitives::druid::{DdeValues, DruidExpectation};
-use tw_chain::primitives::transaction::{GenesisTxHashSpec, Transaction, TxIn, TxOut};
+use tw_chain::primitives::transaction::{
+    GenesisTxHashSpec, OutPoint, Transaction, TxIn, TxOut,
+};
+use tw_chain::script::lang::Script;
 use tw_chain::utils::transaction_utils::{
     construct_item_create_tx, construct_rb_payments_send_tx, construct_rb_receive_payment_tx,
-    construct_tx_core, construct_tx_hash, construct_tx_ins_address, update_input_signatures,
-    ReceiverInfo,
+    construct_tx_core, construct_tx_hash, construct_tx_in_signable_hash, construct_tx_ins_address,
+    update_input_signatures, ReceiverInfo,
 };
 
 use std::{collections::BTreeMap, error::Error, fmt, future::Future, net::SocketAddr};
@@ -1795,6 +1799,101 @@ pub fn make_rb_payment_send_transaction(
         druid_values,
         &BTreeMap::new(),
     )
+}
+
+pub struct RbSenderData {
+    pub sender_pub_addr: String,
+    pub sender_pub_key: String,
+    pub sender_sec_key: String,
+    pub sender_prev_out: OutPoint,
+    pub sender_amount: TokenAmount,
+    pub sender_half_druid: String,
+    pub sender_expected_drs: Option<String>,
+}
+
+pub struct RbReceiverData {
+    pub receiver_pub_addr: String,
+    pub receiver_pub_key: String,
+    pub receiver_sec_key: String,
+    pub receiver_prev_out: OutPoint,
+    pub receiver_half_druid: String,
+}
+
+// Generates a item-based transaction using the given sender and receiver data.
+pub fn generate_rb_transactions(
+    rb_sender_data: RbSenderData,
+    rb_receiver_data: RbReceiverData,
+) -> Vec<(String, Transaction)> {
+    let RbSenderData {
+        sender_pub_addr,
+        sender_pub_key,
+        sender_sec_key,
+        sender_prev_out,
+        sender_amount,
+        sender_half_druid,
+        sender_expected_drs,
+    } = rb_sender_data;
+
+    let RbReceiverData {
+        receiver_pub_addr,
+        receiver_pub_key,
+        receiver_sec_key,
+        receiver_prev_out,
+        receiver_half_druid,
+    } = rb_receiver_data;
+
+    let rb_send_signable_data = construct_tx_in_signable_hash(&sender_prev_out);
+    let rb_send_singature = sign::sign_detached(
+        rb_send_signable_data.as_bytes(),
+        &decode_secret_key(&sender_sec_key).unwrap(),
+    );
+
+    let rb_send_tx_in = TxIn {
+        previous_out: Some(sender_prev_out),
+        script_signature: Script::pay2pkh(
+            rb_send_signable_data,
+            rb_send_singature,
+            decode_pub_key(&sender_pub_key).unwrap(),
+            None,
+        ),
+    };
+
+    let rb_receive_signable_data = construct_tx_in_signable_hash(&receiver_prev_out);
+    let rb_receive_singature = sign::sign_detached(
+        rb_receive_signable_data.as_bytes(),
+        &decode_secret_key(&receiver_sec_key).unwrap(),
+    );
+
+    let rb_receive_tx_in = TxIn {
+        previous_out: Some(receiver_prev_out),
+        script_signature: Script::pay2pkh(
+            rb_receive_signable_data,
+            rb_receive_singature,
+            decode_pub_key(&receiver_pub_key).unwrap(),
+            None,
+        ),
+    };
+
+    let (rb_payment_data, rb_payment_request_data) = make_rb_payment_send_tx_and_request(
+        Asset::Token(sender_amount),
+        (vec![rb_send_tx_in], vec![TxOut::new()]),
+        sender_half_druid,
+        sender_pub_addr,
+        sender_expected_drs,
+    );
+
+    let (rb_receive_tx, rb_payment_response) = make_rb_payment_item_tx_and_response(
+        rb_payment_request_data,
+        (vec![rb_receive_tx_in], vec![TxOut::new()]),
+        receiver_half_druid,
+        receiver_pub_addr,
+    );
+
+    let rb_send_tx = make_rb_payment_send_transaction(rb_payment_response, rb_payment_data);
+    let t_r_hash = construct_tx_hash(&rb_receive_tx);
+    let t_s_hash = construct_tx_hash(&rb_send_tx);
+
+    vec![(t_r_hash, rb_receive_tx), (t_s_hash, rb_send_tx)]
 }
 
 fn make_transaction_gen(setup: UserAutoGenTxSetup) -> Option<AutoGenTx> {
