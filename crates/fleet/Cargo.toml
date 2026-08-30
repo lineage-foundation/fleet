@@ -19,6 +19,7 @@ fleet-mempool = { path = "../fleet-mempool" }
 fleet-miner = { path = "../fleet-miner" }
 fleet-node-common = { path = "../fleet-node-common" }
 fleet-storage = { path = "../fleet-storage" }
+fleet-user = { path = "../fleet-user" }
 fleet-wallet = { path = "../fleet-wallet" }
 futures = "0.3"
 futures-util = "0.3.15"

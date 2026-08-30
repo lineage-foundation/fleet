@@ -1,6 +1,6 @@
-use crate::configurations::WalletTxSpec;
-use crate::constants::NETWORK_VERSION;
-use crate::utils::{create_valid_transaction_with_ins_outs, make_wallet_tx_info};
+use fleet_core::configurations::WalletTxSpec;
+use fleet_core::constants::NETWORK_VERSION;
+use fleet_core::utils::{create_valid_transaction_with_ins_outs, make_wallet_tx_info};
 use bincode::{deserialize, serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::debug;

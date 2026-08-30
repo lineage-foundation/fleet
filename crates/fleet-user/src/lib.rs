@@ -1,20 +1,24 @@
-use crate::comms_handler::{CommsError, Event, Node, TcpTlsConfig};
-use crate::configurations::{TlsPrivateInfo, UserAutoGenTxSetup, UserNodeConfig};
-use crate::interfaces::{
+#![allow(dead_code)]
+
+pub mod transaction_gen;
+
+use fleet_core::comms_handler::{CommsError, Event, Node, TcpTlsConfig};
+use fleet_core::configurations::{TlsPrivateInfo, UserAutoGenTxSetup, UserNodeConfig};
+use fleet_core::interfaces::{
     MempoolRequest, NodeType, PaymentResponse, RbPaymentData, RbPaymentRequestData,
     RbPaymentResponseData, Response, UserApi, UserApiRequest, UserRequest, UtxoFetchType, UtxoSet,
 };
-use crate::node_params::ExtraNodeParams;
-use crate::threaded_call::{ThreadedCallChannel, ThreadedCallSender};
+use fleet_node_common::ExtraNodeParams;
+use fleet_core::threaded_call::{ThreadedCallChannel, ThreadedCallSender};
 use crate::transaction_gen::{PendingMap, TransactionGen};
-use crate::transactor::Transactor;
-use crate::utils::{
+use fleet_core::transactor::Transactor;
+use fleet_core::utils::{
     create_socket_addr, generate_half_druid, get_payments_for_wallet_from_utxo, to_api_keys,
     to_route_pow_infos, try_send_to_ui, ApiKeys, LocalEvent, LocalEventChannel, LocalEventSender,
     ResponseResult, RoutesPoWInfo,
 };
-use crate::wallet::{AddressStore, WalletDb, WalletDbError};
-use crate::Rs2JsMsg;
+use fleet_wallet::{AddressStore, WalletDb, WalletDbError};
+use fleet_core::Rs2JsMsg;
 use async_trait::async_trait;
 use bincode::deserialize;
 use bytes::Bytes;
@@ -1362,7 +1366,6 @@ impl UserNode {
         }
     }
 
-    #[cfg(test)]
     /// Generate a new payment address
     pub async fn generate_static_address_for_miner(&mut self) -> String {
         let (addr, _) = self.wallet_db.generate_payment_address();

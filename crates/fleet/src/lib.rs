@@ -11,9 +11,7 @@ pub mod test_support;
 mod test_utils;
 #[cfg(test)]
 mod tests;
-pub mod transaction_gen;
 pub mod upgrade;
-mod user;
 pub use fleet_wallet as wallet;
 
 pub use fleet_core::{
@@ -35,8 +33,10 @@ pub use pre_launch::PreLaunchNode;
 pub use fleet_storage as storage;
 pub use fleet_storage::{storage_fetch, storage_raft};
 pub use fleet_storage::StorageNode;
-pub use transaction_gen::TransactionGen;
-pub use user::UserNode;
+pub use fleet_user as user;
+pub use fleet_user::transaction_gen;
+pub use fleet_user::transaction_gen::TransactionGen;
+pub use fleet_user::UserNode;
 pub use test_support::create_and_save_fake_to_wallet;
 pub use fleet_core::LocalEvent;
 pub use fleet_core::{
