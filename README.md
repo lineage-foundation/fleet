@@ -121,6 +121,23 @@ Because the config files are already in the image, a deployment can set only the
 
 ---
 
+## HTTP API
+
+Each API-serving node (`mempool`, `storage`, `miner`, `user`) exposes a RESTful API under `/v1` on its existing API port. The API is described with OpenAPI 3.1; Swagger UI is served at `/v1/docs` and the raw spec at `/v1/openapi.json`. TLS, when enabled, uses the node's existing certs.
+
+This replaces the previous RPC-style API. The old flat action-paths (`/make_payment`, `/block_by_num`, and so on) and the `{id, status, reason, route, content}` response envelope no longer exist; clients need to move to the `/v1` routes and plain JSON responses described in the OpenAPI document.
+
+Only a couple of routes are ported so far, with more landing in later work:
+
+| Route | Nodes |
+|-------|-------|
+| `GET /v1/debug` | mempool, storage, miner, user |
+| `GET /v1/blocks/latest` | storage |
+
+Routes that have a configured key require an `x-api-key` header; this is documented as an OpenAPI security scheme (`api_key`) in the spec. `pre_launch` has no HTTP API surface.
+
+---
+
 ## Building only the container image
 
 Enable [BuildKit](https://docs.docker.com/build/buildkit/) when building locally (`DOCKER_BUILDKIT=1`, the default with Docker Desktop and modern Compose). The root `Dockerfile` uses cache mounts for Cargo registry/git downloads during `cargo chef cook` and `cargo build`, so repeat builds reuse crates across invocations.
