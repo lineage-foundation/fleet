@@ -48,6 +48,14 @@ COPY crates/fleet-node-common/Cargo.toml /lineage/crates/fleet-node-common/Cargo
 COPY crates/fleet-node-common/src /lineage/crates/fleet-node-common/src
 COPY crates/fleet-wallet/Cargo.toml /lineage/crates/fleet-wallet/Cargo.toml
 COPY crates/fleet-wallet/src /lineage/crates/fleet-wallet/src
+COPY crates/fleet-mempool/Cargo.toml /lineage/crates/fleet-mempool/Cargo.toml
+COPY crates/fleet-mempool/src /lineage/crates/fleet-mempool/src
+COPY crates/fleet-storage/Cargo.toml /lineage/crates/fleet-storage/Cargo.toml
+COPY crates/fleet-storage/src /lineage/crates/fleet-storage/src
+COPY crates/fleet-miner/Cargo.toml /lineage/crates/fleet-miner/Cargo.toml
+COPY crates/fleet-miner/src /lineage/crates/fleet-miner/src
+COPY crates/fleet-user/Cargo.toml /lineage/crates/fleet-user/Cargo.toml
+COPY crates/fleet-user/src /lineage/crates/fleet-user/src
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
@@ -67,6 +75,14 @@ COPY crates/fleet-node-common/Cargo.toml /lineage/crates/fleet-node-common/Cargo
 COPY crates/fleet-node-common/src /lineage/crates/fleet-node-common/src
 COPY crates/fleet-wallet/Cargo.toml /lineage/crates/fleet-wallet/Cargo.toml
 COPY crates/fleet-wallet/src /lineage/crates/fleet-wallet/src
+COPY crates/fleet-mempool/Cargo.toml /lineage/crates/fleet-mempool/Cargo.toml
+COPY crates/fleet-mempool/src /lineage/crates/fleet-mempool/src
+COPY crates/fleet-storage/Cargo.toml /lineage/crates/fleet-storage/Cargo.toml
+COPY crates/fleet-storage/src /lineage/crates/fleet-storage/src
+COPY crates/fleet-miner/Cargo.toml /lineage/crates/fleet-miner/Cargo.toml
+COPY crates/fleet-miner/src /lineage/crates/fleet-miner/src
+COPY crates/fleet-user/Cargo.toml /lineage/crates/fleet-user/Cargo.toml
+COPY crates/fleet-user/src /lineage/crates/fleet-user/src
 # Keep flags/features aligned with `cargo chef cook` above (`--release --features gpu`).
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
