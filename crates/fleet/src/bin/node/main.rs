@@ -3,7 +3,9 @@
 use clap::{App, ArgMatches};
 use tracing::info;
 
-pub(crate) mod config_load;
+pub(crate) mod config_load {
+    pub(crate) use fleet_core::config_load::*;
+}
 mod mempool;
 mod miner;
 mod pre_launch;

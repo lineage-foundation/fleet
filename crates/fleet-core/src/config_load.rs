@@ -3,13 +3,13 @@
 use config::builder::DefaultState;
 use config::{Config, ConfigBuilder};
 
-pub(crate) fn build(
+pub fn build(
     f: impl FnOnce(ConfigBuilder<DefaultState>) -> Result<ConfigBuilder<DefaultState>, config::ConfigError>,
 ) -> Config {
     f(Config::builder()).unwrap().build().unwrap()
 }
 
-pub(crate) fn rebuild(
+pub fn rebuild(
     base: Config,
     f: impl FnOnce(ConfigBuilder<DefaultState>) -> Result<ConfigBuilder<DefaultState>, config::ConfigError>,
 ) -> Config {
