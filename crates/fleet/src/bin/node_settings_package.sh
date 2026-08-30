@@ -17,7 +17,7 @@ echo "//-----------------------------//"
 echo " "
 
 COMMIT=`git rev-parse HEAD`
-tar -cvzf target/release/znp-$COMMIT.tar.gz target/release/node src/bin/*.toml src/bin/*.json src/bin/*.sh
+tar -cvzf target/release/znp-$COMMIT.tar.gz target/release/mempool target/release/storage target/release/miner target/release/user target/release/pre_launch target/release/upgrade src/bin/*.toml src/bin/*.json src/bin/*.sh
 tar -cvzf target/release/znp-$COMMIT.configs.tar.gz src/bin/*.toml src/bin/*.json src/bin/*.sh
 tar -cvzf target/release/znp-$COMMIT.light-config.tar.gz src/bin/*.toml src/bin/*.sh
 

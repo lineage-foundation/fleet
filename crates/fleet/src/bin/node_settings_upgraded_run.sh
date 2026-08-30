@@ -30,13 +30,13 @@ else
     USER_LOG=debug
 fi
 
-RUST_LOG="$STORAGE_LOG,raft=warn" target/release/node storage --config=src/bin/node_settings_upgraded.toml > storage_0.log 2>&1 &
+RUST_LOG="$STORAGE_LOG,raft=warn" target/release/storage --config=src/bin/node_settings_upgraded.toml > storage_0.log 2>&1 &
 s0=$!
-RUST_LOG="$COMPUTE_LOG" target/release/node mempool --config=src/bin/node_settings_upgraded.toml > mempool_0.log 2>&1 &
+RUST_LOG="$COMPUTE_LOG" target/release/mempool --config=src/bin/node_settings_upgraded.toml > mempool_0.log 2>&1 &
 c0=$!
-RUST_LOG="$MINER_LOG" target/release/node miner --config=src/bin/node_settings_upgraded.toml --api_port=3010 --passphrase=TestPassword > miner_0.log 2>&1 &
+RUST_LOG="$MINER_LOG" target/release/miner --config=src/bin/node_settings_upgraded.toml --api_port=3010 --passphrase=TestPassword > miner_0.log 2>&1 &
 m0=$!
-RUST_LOG="$USER_LOG" target/release/node user --config=src/bin/node_settings_upgraded.toml --passphrase=TestPassword > user_0.log 2>&1 &
+RUST_LOG="$USER_LOG" target/release/user --config=src/bin/node_settings_upgraded.toml --passphrase=TestPassword > user_0.log 2>&1 &
 u0=$!
 
 echo $s0 $c0 $m0 $u0
