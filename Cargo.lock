@@ -1827,6 +1827,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "miner"
+version = "1.1.2"
+dependencies = [
+ "clap",
+ "config",
+ "fleet-api",
+ "fleet-core",
+ "fleet-miner",
+ "fleet-node-common",
+ "fleet-user",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "warp",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
