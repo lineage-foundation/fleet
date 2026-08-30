@@ -60,6 +60,11 @@ services:
     image: fleet-mempool:local
     environment:
       RUST_LOG: info,debug
+      # Any config value can be overridden without mounting a file, via LINEAGE_-prefixed
+      # env vars (nested keys joined with __). Uncomment to try it:
+      # LINEAGE_MEMPOOL_API_PORT: 3005
+      # LINEAGE_PEER_LIMIT: 2000
+      # LINEAGE_MEMPOOL_NODES: http://mempool-node:12300,http://mempool-2:12300
     ports:
       - "12300:12300"
       - "3003:3003"

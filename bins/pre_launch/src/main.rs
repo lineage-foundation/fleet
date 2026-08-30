@@ -113,7 +113,7 @@ pub fn clap_app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn load_settings(matches: &clap::ArgMatches) -> config::Config {
-    use fleet_core::config_load::{build, rebuild};
+    use fleet_core::config_load::{build_with_env_overrides, rebuild};
 
     let setting_file = matches
         .value_of("config")
@@ -122,7 +122,7 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
         .value_of("tls_config")
         .unwrap_or("src/bin/tls_certificates.json");
 
-    let mut settings = build(|b| {
+    let mut settings = build_with_env_overrides(|b| {
         Ok(b.set_default("storage_node_idx", 0)?
             .set_default("mempool_node_idx", 0)?
             .add_source(config::File::with_name(setting_file))

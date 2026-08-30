@@ -351,7 +351,7 @@ fn clap_app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn load_settings(matches: &clap::ArgMatches) -> (config::Config, Option<config::Config>) {
-    use fleet_core::config_load::{build, rebuild};
+    use fleet_core::config_load::{build_with_env_overrides, node_addresses, rebuild};
 
     let mut miner_index: usize = 0;
     let mut user_index: usize = 0;
@@ -369,7 +369,7 @@ fn load_settings(matches: &clap::ArgMatches) -> (config::Config, Option<config::
         .value_of("api_config")
         .unwrap_or("src/bin/api_config.json");
 
-    let mut settings = build(|b| {
+    let mut settings = build_with_env_overrides(|b| {
         Ok(b.set_default("api_keys", Vec::<String>::new())?
             .set_default("miner_mempool_node_idx", 0)?
             .set_default("miner_storage_node_idx", 0)?
@@ -394,22 +394,15 @@ fn load_settings(matches: &clap::ArgMatches) -> (config::Config, Option<config::
     if let Some(idx) = matches.value_of("index") {
         miner_index = idx.parse::<usize>().unwrap();
     } else if let Some(address) = matches.value_of("address") {
-        let mut node = HashMap::new();
-        node.insert("address".to_owned(), address.to_owned());
+        let mut miner_nodes = node_addresses(&settings, "miner_nodes");
 
-        if let Ok(mut miner_nodes) = settings.get_array("miner_nodes") {
-            let passed_addr_val = Value::new(None, node);
-
-            miner_index = if miner_nodes.contains(&passed_addr_val) {
-                miner_nodes
-                    .iter()
-                    .position(|r| r == &passed_addr_val)
-                    .unwrap()
-            } else {
-                miner_nodes.push(passed_addr_val);
+        miner_index = match miner_nodes.iter().position(|a| a == address) {
+            Some(i) => i,
+            None => {
+                miner_nodes.push(address.to_owned());
                 miner_nodes.len() - 1
-            };
-        }
+            }
+        };
         settings = rebuild(settings, |b| Ok(b.set_override("miner_address", address)?));
     }
 
@@ -418,15 +411,11 @@ fn load_settings(matches: &clap::ArgMatches) -> (config::Config, Option<config::
     }
 
     if matches.value_of("address").is_none() {
-        let miner_nodes = settings
-            .get_array("miner_nodes")
-            .expect("No miner_nodes entry in the TOML");
-        let raw_map: &Value = miner_nodes
+        let miner_nodes = node_addresses(&settings, "miner_nodes");
+        let addr = miner_nodes
             .get(miner_index)
-            .expect("No entry found at provided index");
-        let map = raw_map.clone().into_table().unwrap();
-        let addr = map.get("address").unwrap();
-        settings = rebuild(settings, |b| Ok(b.set_override("miner_address", addr.to_string())?));
+            .expect("No miner_nodes entry at the resolved index");
+        settings = rebuild(settings, |b| Ok(b.set_override("miner_address", addr.clone())?));
     }
 
     let mut db_mode = settings.get_table("miner_db_mode").unwrap();
@@ -443,31 +432,24 @@ fn load_settings(matches: &clap::ArgMatches) -> (config::Config, Option<config::
         settings = rebuild(settings, |b| Ok(b.set_override("user_db_mode", db_mode)?));
         has_user_settings = true;
     } else if let Some(address) = matches.value_of("with_user_address") {
-        let mut node = HashMap::new();
-        node.insert("address".to_owned(), address.to_owned());
+        let mut user_nodes = node_addresses(&settings, "user_nodes");
 
-        if let Ok(mut user_nodes) = settings.get_array("user_nodes") {
-            let passed_addr_val = Value::new(None, node);
-
-            user_index = if user_nodes.contains(&passed_addr_val) {
-                user_nodes
-                    .iter()
-                    .position(|r| r == &passed_addr_val)
-                    .unwrap()
-            } else {
-                user_nodes.push(passed_addr_val);
+        user_index = match user_nodes.iter().position(|a| a == address) {
+            Some(i) => i,
+            None => {
+                user_nodes.push(address.to_owned());
                 user_nodes.len() - 1
-            };
-            has_user_settings = true;
-        }
+            }
+        };
+        has_user_settings = true;
     }
 
     if has_user_settings {
-        let user_nodes = settings.get_array("user_nodes").unwrap();
-        let raw_map: &Value = user_nodes.get(user_index).unwrap();
-        let map = raw_map.clone().into_table().unwrap();
-        let addr = map.get("address").unwrap();
-        settings = rebuild(settings, |b| Ok(b.set_override("user_address", addr.to_string())?));
+        let user_nodes = node_addresses(&settings, "user_nodes");
+        let addr = user_nodes
+            .get(user_index)
+            .expect("No user_nodes entry at the resolved index");
+        settings = rebuild(settings, |b| Ok(b.set_override("user_address", addr.clone())?));
 
         if let Ok(user_wallet_seeds) = settings.get_array("user_wallet_seeds") {
             settings = rebuild(settings, |b| {

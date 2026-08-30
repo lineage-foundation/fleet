@@ -1,5 +1,6 @@
 // use crate::comms_handler::Node;
 use crate::interfaces::InitialIssuance;
+use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
@@ -91,9 +92,63 @@ pub enum DbMode {
 }
 
 /// Configuration info for a node
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct NodeSpec {
     pub address: String,
+}
+
+/// Accept a peer list as either a sequence (file: `[[mempool_nodes]] address = "..."`, or a
+/// list of address strings) or a single comma-separated address string (env override, e.g.
+/// `LINEAGE_MEMPOOL_NODES=http://a:1,http://b:2`). Whitespace is trimmed; empty entries dropped.
+fn deserialize_node_list<'de, D>(deserializer: D) -> Result<Vec<NodeSpec>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct NodeListVisitor;
+
+    impl<'de> Visitor<'de> for NodeListVisitor {
+        type Value = Vec<NodeSpec>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a sequence of node specs/addresses or a comma-separated address string")
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(v.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| NodeSpec { address: s.to_string() })
+                .collect())
+        }
+
+        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+            self.visit_str(&v)
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            #[derive(serde::Deserialize)]
+            #[serde(untagged)]
+            enum SpecOrAddr {
+                Spec(NodeSpec),
+                Addr(String),
+            }
+            let mut out = Vec::new();
+            while let Some(item) = seq.next_element::<SpecOrAddr>()? {
+                match item {
+                    SpecOrAddr::Spec(s) => out.push(s),
+                    SpecOrAddr::Addr(a) => {
+                        let a = a.trim();
+                        if !a.is_empty() {
+                            out.push(NodeSpec { address: a.to_string() });
+                        }
+                    }
+                }
+            }
+            Ok(out)
+        }
+    }
+
+    deserializer.deserialize_any(NodeListVisitor)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -117,10 +172,13 @@ pub struct MempoolNodeConfig {
     /// Configuation for unicorn
     pub mempool_unicorn_fixed_param: UnicornFixedInfo,
     /// All mempool nodes addresses
+    #[serde(deserialize_with = "deserialize_node_list")]
     pub mempool_nodes: Vec<NodeSpec>,
     /// All storage nodes addresses: only use first
+    #[serde(deserialize_with = "deserialize_node_list")]
     pub storage_nodes: Vec<NodeSpec>,
     /// All user nodes addresses
+    #[serde(deserialize_with = "deserialize_node_list")]
     pub user_nodes: Vec<NodeSpec>,
     /// Whether mempool node will use raft or act independently (0)
     pub mempool_raft: usize,
@@ -193,8 +251,10 @@ pub struct StorageNodeConfig {
     /// Initial API keys
     pub api_keys: BTreeMap<String, Vec<String>>,
     /// All mempool nodes addresses
+    #[serde(deserialize_with = "deserialize_node_list")]
     pub mempool_nodes: Vec<NodeSpec>,
     /// All storage nodes addresses: only use first
+    #[serde(deserialize_with = "deserialize_node_list")]
     pub storage_nodes: Vec<NodeSpec>,
     /// Whether storage node will use raft or act independently (0)
     pub storage_raft: usize,
@@ -232,6 +292,7 @@ pub struct MinerNodeConfig {
     /// Index of the mempool node to use in mempool_nodes
     pub miner_mempool_node_idx: usize,
     /// All mempool nodes addresses
+    #[serde(deserialize_with = "deserialize_node_list")]
     pub mempool_nodes: Vec<NodeSpec>,
     /// API port
     pub miner_api_port: u16,
@@ -271,6 +332,7 @@ pub struct UserNodeConfig {
     /// Index of the mempool node to use in mempool_nodes
     pub user_mempool_node_idx: usize,
     /// All mempool nodes addresses
+    #[serde(deserialize_with = "deserialize_node_list")]
     pub mempool_nodes: Vec<NodeSpec>,
     /// API port
     pub user_api_port: u16,
@@ -342,4 +404,56 @@ fn deserialize_token_amount<'de, D: serde::Deserializer<'de>>(
 ) -> Result<TokenAmount, D::Error> {
     let value: u64 = serde::Deserialize::deserialize(deserializer)?;
     Ok(TokenAmount(value))
+}
+
+#[cfg(test)]
+mod node_list_tests {
+    use super::*;
+
+    #[derive(serde::Deserialize)]
+    struct Holder {
+        #[serde(deserialize_with = "deserialize_node_list")]
+        nodes: Vec<NodeSpec>,
+    }
+
+    #[test]
+    fn comma_string_from_env() {
+        let h: Holder = serde_json::from_value(serde_json::json!({
+            "nodes": "http://a:1, http://b:2 ,"
+        }))
+        .unwrap();
+        assert_eq!(
+            h.nodes,
+            vec![
+                NodeSpec {
+                    address: "http://a:1".into()
+                },
+                NodeSpec {
+                    address: "http://b:2".into()
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn seq_of_tables_from_file() {
+        let h: Holder = serde_json::from_value(serde_json::json!({
+            "nodes": [{"address": "http://a:1"}, {"address": "http://b:2"}]
+        }))
+        .unwrap();
+        assert_eq!(h.nodes.len(), 2);
+        assert_eq!(h.nodes[0].address, "http://a:1");
+    }
+
+    #[test]
+    fn single_address_string() {
+        let h: Holder =
+            serde_json::from_value(serde_json::json!({"nodes": "http://only:1"})).unwrap();
+        assert_eq!(
+            h.nodes,
+            vec![NodeSpec {
+                address: "http://only:1".into()
+            }]
+        );
+    }
 }
