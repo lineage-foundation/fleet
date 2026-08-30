@@ -1,15 +1,15 @@
-use crate::api::handlers::{self, DbgPaths};
-use crate::api::utils::{
+use crate::handlers::{self, DbgPaths};
+use crate::utils::{
     auth_request, create_new_cache, handle_rejection, map_api_res_and_cache, warp_path,
     with_node_component, with_semaphore, ReplyCache, CACHE_LIVE_TIME,
 };
-use crate::comms_handler::Node;
-use crate::constants::API_CONCURRENCY_LIMIT;
-use crate::db_utils::SimpleDb;
-use crate::interfaces::{CurrentBlockWithMutex, MempoolApi, UserApi};
-use crate::threaded_call::ThreadedCallSender;
-use crate::utils::{ApiKeys, RoutesPoWInfo};
-use crate::wallet::WalletDb;
+use fleet_core::comms_handler::Node;
+use fleet_core::constants::API_CONCURRENCY_LIMIT;
+use fleet_core::db_utils::SimpleDb;
+use fleet_core::interfaces::{CurrentBlockWithMutex, MempoolApi, UserApi};
+use fleet_core::threaded_call::ThreadedCallSender;
+use fleet_core::utils::{ApiKeys, RoutesPoWInfo};
+use fleet_wallet::WalletDb;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Semaphore;
 

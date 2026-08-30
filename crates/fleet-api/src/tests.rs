@@ -1,30 +1,30 @@
-use crate::api::handlers::{
+use crate::handlers::{
     AddressConstructData, Addresses, ChangePassphraseData, CreateItemAssetDataMempool,
     CreateItemAssetDataUser, CreateTransaction, CreateTxIn, CreateTxInScript, DbgPaths,
     EncapsulatedPayment, FetchPendingData,
 };
-use crate::api::routes;
-use crate::api::utils::{auth_request, create_new_cache, handle_rejection, CACHE_LIVE_TIME};
-use crate::comms_handler::{Event, Node, TcpTlsConfig};
-use crate::configurations::{DbMode, MempoolNodeSharedConfig};
-use crate::constants::FUND_KEY;
-use crate::db_utils::{new_db, SimpleDb};
-use crate::interfaces::{
+use crate::routes;
+use crate::utils::{auth_request, create_new_cache, handle_rejection, CACHE_LIVE_TIME};
+use fleet_core::comms_handler::{Event, Node, TcpTlsConfig};
+use fleet_core::configurations::{DbMode, MempoolNodeSharedConfig};
+use fleet_core::constants::FUND_KEY;
+use fleet_core::db_utils::{new_db, SimpleDb};
+use fleet_core::interfaces::{
     BlockchainItemMeta, DruidDroplet, DruidPool, MempoolApi, MempoolApiRequest, MempoolError,
     NodeType, Response, StoredSerializingBlock, TxStatus, UserApiRequest, UserRequest,
     UtxoFetchType,
 };
-use crate::storage::{put_named_last_block_to_block_chain, put_to_block_chain, DB_SPEC};
-use crate::test_utils::{generate_rb_transactions, RbReceiverData, RbSenderData};
-use crate::threaded_call::ThreadedCallChannel;
-use crate::tracked_utxo::TrackedUtxoSet;
-use crate::utils::{
+use fleet_core::threaded_call::ThreadedCallChannel;
+use fleet_core::tracked_utxo::TrackedUtxoSet;
+use fleet_core::utils::{
     apply_mining_tx, construct_valid_block_pow_hash, create_item_asset_tx_from_sig,
     decode_secret_key, generate_pow_for_block, to_api_keys, to_route_pow_infos,
     tracing_log_try_init, validate_pow_block, ApiKeys,
 };
-use crate::wallet::{AddressStore, AddressStoreHex, WalletDb, WalletDbError};
-use crate::MempoolRequest;
+use fleet_core::MempoolRequest;
+use fleet_storage::{put_named_last_block_to_block_chain, put_to_block_chain, DB_SPEC};
+use fleet_user::{generate_rb_transactions, RbReceiverData, RbSenderData};
+use fleet_wallet::{AddressStore, AddressStoreHex, WalletDb, WalletDbError};
 use bincode::serialize;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -134,11 +134,11 @@ impl MempoolApi for MempoolTest {
     fn get_transaction_status(
         &self,
         tx_hashes: Vec<String>,
-    ) -> BTreeMap<String, crate::interfaces::TxStatus> {
+    ) -> BTreeMap<String, fleet_core::interfaces::TxStatus> {
         let mut tx_status = BTreeMap::new();
         for tx_hash in tx_hashes {
             let tx_status_type = TxStatus {
-                status: crate::interfaces::TxStatusType::Confirmed,
+                status: fleet_core::interfaces::TxStatusType::Confirmed,
                 additional_info: "".to_string(),
                 timestamp: 0,
             };
