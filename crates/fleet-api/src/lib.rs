@@ -1,10 +1,6 @@
-//! This module provides API routes and handlers for API requests
+//! REST API for fleet nodes, served over axum with an OpenAPI/Swagger UI harness under `/v1`.
 
-pub mod errors;
-pub mod handlers;
-pub mod responses;
-pub mod routes;
-pub mod utils;
-
-#[cfg(test)]
-mod tests;
+pub mod error;
+pub mod openapi;
+pub mod state;
+pub mod v1;
