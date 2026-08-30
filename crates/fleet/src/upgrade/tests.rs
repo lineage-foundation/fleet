@@ -12,10 +12,9 @@ use crate::db_utils::{
 use crate::interfaces::{BlockStoredInfo, BlockchainItem, BlockchainItemMeta, Response};
 use crate::node_params::ExtraNodeParams;
 use crate::test_utils::{
-    get_test_tls_spec, node_join_all_checked, remove_all_node_dbs, Network, NetworkConfig,
-    NetworkNodeInfo, NodeType,
+    get_test_tls_spec, mempool_committed_tx_pool, node_join_all_checked, remove_all_node_dbs,
+    Network, NetworkConfig, NetworkNodeInfo, NodeType,
 };
-use crate::tests::mempool_committed_tx_pool;
 use crate::utils::{get_test_common_unicorn, tracing_log_try_init};
 use crate::{mempool, mempool_raft, storage, storage_raft, wallet};
 use std::collections::BTreeMap;

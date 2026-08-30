@@ -7,8 +7,7 @@ pub use fleet_api as api;
 pub use fleet_node_common as node_params;
 mod pre_launch;
 pub mod test_support;
-#[cfg(test)]
-mod test_utils;
+pub mod test_utils;
 #[cfg(test)]
 mod tests;
 pub mod upgrade;

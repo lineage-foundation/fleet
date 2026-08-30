@@ -1961,7 +1961,7 @@ async fn gen_transactions_common(
         let transactions = user_process_mining_notified(&mut network, "user1").await;
         mempool_handle_event(&mut network, "mempool1", &["Transactions added to tx pool"]).await;
         mempool_handle_event(&mut network, "mempool1", &["Transactions committed"]).await;
-        let committed = mempool_committed_tx_pool(&mut network, "mempool1").await;
+        let committed = crate::test_utils::mempool_committed_tx_pool(&mut network, "mempool1").await;
 
         tx_expected.push(transactions.unwrap());
         tx_committed.push(committed);
@@ -4003,18 +4003,10 @@ async fn mempool_all_committed_tx_pool(
 ) -> Vec<BTreeMap<String, Transaction>> {
     let mut result = Vec::new();
     for name in mempool_group {
-        let r = mempool_committed_tx_pool(network, name).await;
+        let r = crate::test_utils::mempool_committed_tx_pool(network, name).await;
         result.push(r);
     }
     result
-}
-
-pub async fn mempool_committed_tx_pool(
-    network: &mut Network,
-    mempool: &str,
-) -> BTreeMap<String, Transaction> {
-    let c = network.mempool(mempool).unwrap().lock().await;
-    c.get_committed_tx_pool().clone()
 }
 
 async fn mempool_all_committed_tx_druid_pool(
