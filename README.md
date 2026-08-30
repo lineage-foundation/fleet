@@ -115,6 +115,8 @@ Setting one of these fully replaces the corresponding list from the config file;
 
 Precedence, lowest to highest: built-in defaults, then the config file, then `LINEAGE_*` env vars, then command-line flags where a flag exists for that value.
 
+Env values are parsed by type, so a value for a text field that looks purely numeric (for example a jurisdiction or passphrase of only digits) can be misread as a number. For those few string fields, prefer the config file.
+
 Because the config files are already in the image, a deployment can set only the `LINEAGE_*` variables it needs and skip mounting any config file at all.
 
 ---
