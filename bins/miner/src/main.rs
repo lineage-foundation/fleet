@@ -29,6 +29,7 @@ async fn run_node(matches: &ArgMatches<'_>) {
     info!("Started node at {}", node.local_address());
 
     let miner_api_inputs = node.api_inputs();
+    let wallet_db_for_api = node.get_wallet_db().clone();
     let shared_wallet_db = Some(node.get_wallet_db().clone());
     let (node_conn, addrs_to_connect, expected_connected_addrs) = node.connect_info_peers();
     let local_event_tx = node.local_event_tx().clone();
@@ -133,9 +134,10 @@ async fn run_node(matches: &ArgMatches<'_>) {
             // User / Miner combined REST API
             let api_handle = tokio::spawn({
                 let threaded_calls_tx = threaded_calls_tx;
+                let wallet_db_for_api = wallet_db_for_api;
                 let (
                     (db, user_node, api_addr, api_tls, api_keys, api_pow_info),
-                    (_, miner_node, _, _, _, _current_block, _),
+                    (_, miner_node, _, _, _, current_block, _),
                 ) = api_inputs;
 
                 info!("REST API started on port {:?}", api_addr.port());
@@ -152,6 +154,8 @@ async fn run_node(matches: &ArgMatches<'_>) {
                         threaded_calls_tx,
                         api_keys,
                         api_pow_info,
+                        wallet_db_for_api,
+                        current_block,
                     ));
 
                     if let Some(api_tls) = api_tls {
@@ -203,7 +207,8 @@ async fn run_node(matches: &ArgMatches<'_>) {
         None => {
             // Miner REST API
             let api_handle = tokio::spawn({
-                let (_db, miner_node, api_addr, api_tls, api_keys, _current_block, api_pow_info) =
+                let wallet_db_for_api = wallet_db_for_api;
+                let (_db, miner_node, api_addr, api_tls, api_keys, current_block, api_pow_info) =
                     miner_api_inputs;
 
                 info!("REST API started on port {:?}", api_addr.port());
@@ -217,6 +222,8 @@ async fn run_node(matches: &ArgMatches<'_>) {
                         miner_node,
                         api_keys,
                         api_pow_info,
+                        wallet_db_for_api,
+                        current_block,
                     ));
 
                     if let Some(api_tls) = api_tls {

@@ -3,10 +3,11 @@
 use std::sync::{Arc, Mutex};
 
 use fleet_core::db_utils::SimpleDb;
-use fleet_core::interfaces::{MempoolApi, UserApi};
+use fleet_core::interfaces::{CurrentBlockWithMutex, MempoolApi, UserApi};
 use fleet_core::threaded_call::ThreadedCallSender;
 use fleet_core::utils::{ApiKeys, RoutesPoWInfo};
 use fleet_core::Node;
+use fleet_wallet::WalletDb;
 
 /// Shared state handed to every `/v1` handler via axum's `State` extractor.
 ///
@@ -38,6 +39,10 @@ pub struct ApiState {
     /// Paths mounted on this node's router; echoed back in `/v1/debug` for parity with
     /// the legacy `DbgPaths` payload. Set by the `*_router` builders in `v1::mod`.
     pub mounted_routes: Vec<String>,
+    /// The node's wallet DB, where applicable (user, miner).
+    pub wallet_db: Option<WalletDb>,
+    /// The latest block received for mining, where applicable (miner).
+    pub current_block: Option<CurrentBlockWithMutex>,
 }
 
 impl ApiState {
@@ -51,6 +56,8 @@ impl ApiState {
             mempool_calls_tx: None,
             user_calls_tx: None,
             mounted_routes: Vec::new(),
+            wallet_db: None,
+            current_block: None,
         }
     }
 
@@ -80,23 +87,28 @@ impl ApiState {
         }
     }
 
-    /// State for a user node: a DB handle and a user threaded-call sender.
+    /// State for a user node: a DB handle, a user threaded-call sender, and the
+    /// wallet DB.
     pub fn user(
         node: Node,
         db: Arc<Mutex<SimpleDb>>,
         user_calls_tx: ThreadedCallSender<dyn UserApi>,
         api_keys: ApiKeys,
         routes_pow: RoutesPoWInfo,
+        wallet_db: WalletDb,
     ) -> Self {
         Self {
             db: Some(db),
             user_calls_tx: Some(user_calls_tx),
+            wallet_db: Some(wallet_db),
             ..Self::bare(node, api_keys, routes_pow)
         }
     }
 
     /// State for a miner node: the miner's own `Node` plus its embedded user node's
-    /// `Node`/DB/threaded-call sender (mirrors `miner_node_with_user_routes`).
+    /// `Node`/DB/threaded-call sender (mirrors `miner_node_with_user_routes`), plus
+    /// the wallet DB and the latest received block.
+    #[allow(clippy::too_many_arguments)]
     pub fn miner(
         node: Node,
         aux_node: Node,
@@ -104,19 +116,33 @@ impl ApiState {
         user_calls_tx: ThreadedCallSender<dyn UserApi>,
         api_keys: ApiKeys,
         routes_pow: RoutesPoWInfo,
+        wallet_db: WalletDb,
+        current_block: CurrentBlockWithMutex,
     ) -> Self {
         Self {
             aux_node: Some(aux_node),
             db: Some(db),
             user_calls_tx: Some(user_calls_tx),
+            wallet_db: Some(wallet_db),
+            current_block: Some(current_block),
             ..Self::bare(node, api_keys, routes_pow)
         }
     }
 
     /// State for a standalone miner node (no embedded user node): no DB, no
-    /// threaded-call sender, no aux node.
-    pub fn miner_solo(node: Node, api_keys: ApiKeys, routes_pow: RoutesPoWInfo) -> Self {
-        Self::bare(node, api_keys, routes_pow)
+    /// threaded-call sender, no aux node, but it has a wallet and mines.
+    pub fn miner_solo(
+        node: Node,
+        api_keys: ApiKeys,
+        routes_pow: RoutesPoWInfo,
+        wallet_db: WalletDb,
+        current_block: CurrentBlockWithMutex,
+    ) -> Self {
+        Self {
+            wallet_db: Some(wallet_db),
+            current_block: Some(current_block),
+            ..Self::bare(node, api_keys, routes_pow)
+        }
     }
 
     /// State for a pre-launch node: no DB, no threaded-call sender.
