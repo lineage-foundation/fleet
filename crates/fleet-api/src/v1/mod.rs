@@ -967,6 +967,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn post_running_total_refresh_routes_through_the_embedded_user_node_for_a_paired_miner() {
+        // A miner paired with an embedded user node must refresh via that user node
+        // (aux_node) exactly as legacy `miner_node_with_user_routes` did, not via the
+        // miner node. The event injection succeeds either way on a test node, so this
+        // guards that the aux-node path is wired and doesn't error.
+        let app = miner_router(miner_with_user_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/wallet/running-total:refresh")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"all":false,"addresses":["abc"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
     async fn get_outgoing_txs_returns_200_empty_array_for_empty_wallet() {
         let app = miner_router(miner_solo_state().await);
 

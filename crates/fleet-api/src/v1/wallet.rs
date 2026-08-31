@@ -289,7 +289,7 @@ pub async fn post_import_keypairs(
             .map_err(|err| ApiProblem::internal(err.to_string()))?;
     }
 
-    inject_running_total_refresh(&state.node, imported.clone())?;
+    inject_running_total_refresh(wallet_node(&state), imported.clone())?;
 
     Ok((axum::http::StatusCode::CREATED, Json(ImportKeypairsResponse { imported })))
 }
@@ -305,7 +305,15 @@ pub struct RunningTotalRefreshRequest {
     pub addresses: Vec<String>,
 }
 
-/// Inject a "refresh running total from the UTXO set" event into this node, branching
+/// Pick the node that owns the wallet for running-total refreshes: a miner paired with
+/// an embedded user node routes these through that user node (`aux_node`), exactly as the
+/// legacy `miner_node_with_user_routes` did; a solo miner or a standalone user node has no
+/// `aux_node`, so it uses the node itself.
+fn wallet_node(state: &ApiState) -> &fleet_core::Node {
+    state.aux_node.as_ref().unwrap_or(&state.node)
+}
+
+/// Inject a "refresh running total from the UTXO set" event into the given node, branching
 /// on node type exactly as the legacy import/update-running-total handlers did.
 ///
 /// `inject_next_event` is generic (`data: impl Serialize`), so each arm passes its
@@ -363,7 +371,7 @@ pub async fn post_running_total_refresh(
         return Err(ApiProblem::bad_request("no addresses to refresh"));
     }
 
-    inject_running_total_refresh(&state.node, list)?;
+    inject_running_total_refresh(wallet_node(&state), list)?;
 
     Ok(axum::http::StatusCode::ACCEPTED)
 }
