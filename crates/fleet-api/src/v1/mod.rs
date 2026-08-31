@@ -141,10 +141,11 @@ mod tests {
     use fleet_core::tracked_utxo::TrackedUtxoSet;
     use fleet_core::utils::{ApiKeys, RoutesPoWInfo};
     use fleet_core::Node;
-    use fleet_wallet::WalletDb;
+    use fleet_wallet::{AddressStore, WalletDb};
     use http_body_util::BodyExt;
     use serde_json::Value;
     use tower::ServiceExt;
+    use tw_chain::crypto::sign_ed25519 as sign;
     use tw_chain::primitives::asset::TokenAmount;
     use tw_chain::primitives::transaction::{GenesisTxHashSpec, Transaction};
 
@@ -830,6 +831,74 @@ mod tests {
         assert_eq!(response.status(), StatusCode::CREATED);
         let body = body_json(response).await;
         assert_eq!(body["imported"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn post_import_keypairs_saves_nothing_when_a_later_entry_has_bad_hex() {
+        // `state` shares its `WalletDb` (an `Arc<Mutex<..>>` under the hood) across
+        // clones, so the router built for the follow-up GET below sees whatever the
+        // failing POST actually persisted.
+        let state = miner_solo_state().await;
+
+        let (public_key, secret_key) = sign::gen_keypair();
+        let good_store = AddressStore {
+            public_key,
+            secret_key,
+            address_version: None,
+        };
+        let good_hex: fleet_wallet::AddressStoreHex = good_store.into();
+
+        // Key names are chosen so "aGoodAddr" sorts before "zBadAddr" in the
+        // request body's BTreeMap: under the old interleaved
+        // convert-then-save-per-entry loop, the good address would already have
+        // been saved by the time the bad hex was hit and the handler bailed with
+        // 400.
+        let body = serde_json::json!({
+            "addresses": {
+                "aGoodAddr": good_hex,
+                "zBadAddr": {
+                    "public_key": "not-hex",
+                    "secret_key": "not-hex",
+                    "address_version": null,
+                },
+            },
+        });
+
+        let app = miner_router(state.clone());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/wallet/keypairs")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+
+        // No partial write: even though "aGoodAddr" sorts first and is valid, the
+        // whole import must have been rejected before anything was saved.
+        let app = miner_router(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/wallet/keypairs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["addresses"], serde_json::json!({}));
     }
 
     #[tokio::test]

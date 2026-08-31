@@ -274,9 +274,16 @@ pub async fn post_import_keypairs(
 
     let imported: Vec<String> = body.addresses.keys().cloned().collect();
 
+    // Convert every entry before saving any of them, so a bad hex further down the
+    // request never leaves earlier entries persisted behind a 400 response.
+    let mut converted: Vec<(String, AddressStore)> = Vec::with_capacity(body.addresses.len());
     for (addr, hex) in body.addresses {
         let store =
             AddressStore::try_from_hex_store(hex).map_err(|err| ApiProblem::bad_request(err.to_string()))?;
+        converted.push((addr, store));
+    }
+
+    for (addr, store) in converted {
         wallet_db
             .save_address_to_wallet(addr, store)
             .map_err(|err| ApiProblem::internal(err.to_string()))?;
