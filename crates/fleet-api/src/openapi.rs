@@ -27,6 +27,10 @@ use crate::v1::items::{
 #[allow(unused_imports)]
 use crate::v1::mining::{__path_get_current_block, get_current_block, CurrentBlockResponse};
 #[allow(unused_imports)]
+use crate::v1::payments::{
+    __path_post_payment, post_payment, PaymentAcceptedResponse, PaymentKind, PaymentRequest,
+};
+#[allow(unused_imports)]
 use crate::v1::supply::{__path_get_supply, get_supply, SupplyResponse};
 #[allow(unused_imports)]
 use crate::v1::transactions::{
@@ -83,6 +87,7 @@ use crate::v1::wallet::{
         post_running_total_refresh,
         get_current_block,
         post_create_item,
+        post_payment,
     ),
     components(schemas(
         DebugData,
@@ -119,6 +124,9 @@ use crate::v1::wallet::{
         CreateItemRequest,
         CreateItemResponse,
         CreateItemAcceptedResponse,
+        PaymentKind,
+        PaymentRequest,
+        PaymentAcceptedResponse,
         ApiProblem,
     )),
     modifiers(&SecurityAddon),
@@ -170,6 +178,7 @@ mod tests {
                 "/v1/debug",
                 "/v1/items",
                 "/v1/mining/current-block",
+                "/v1/payments",
                 "/v1/supply",
                 "/v1/transactions",
                 "/v1/transactions/outgoing",
