@@ -21,11 +21,19 @@ use crate::v1::blocks::{
 #[allow(unused_imports)]
 use crate::v1::debug::{__path_get_debug, get_debug, DebugData, PeerInfo};
 #[allow(unused_imports)]
+use crate::v1::mining::{__path_get_current_block, get_current_block, CurrentBlockResponse};
+#[allow(unused_imports)]
 use crate::v1::supply::{__path_get_supply, get_supply, SupplyResponse};
 #[allow(unused_imports)]
 use crate::v1::transactions::{
-    __path_get_transaction_status, __path_query_transaction_status, get_transaction_status, query_transaction_status,
-    HashesQuery, TxStatusResponse, TxStatusTypeResponse,
+    __path_get_outgoing_txs, __path_get_transaction_status, __path_query_transaction_status, get_outgoing_txs,
+    get_transaction_status, query_transaction_status, HashesQuery, OutgoingTxsResponse, TxStatusResponse,
+    TxStatusTypeResponse,
+};
+#[allow(unused_imports)]
+use crate::v1::wallet::{
+    __path_get_keypairs, __path_get_wallet_info, get_keypairs, get_wallet_info, KeypairsResponse, WalletInfoQuery,
+    WalletInfoResponse,
 };
 
 /// Aggregates every `/v1` operation ported so far into one OpenAPI 3.1 document,
@@ -49,6 +57,10 @@ use crate::v1::transactions::{
         query_balances,
         get_transaction_status,
         query_transaction_status,
+        get_outgoing_txs,
+        get_wallet_info,
+        get_keypairs,
+        get_current_block,
     ),
     components(schemas(
         DebugData,
@@ -63,6 +75,11 @@ use crate::v1::transactions::{
         TxStatusResponse,
         TxStatusTypeResponse,
         HashesQuery,
+        OutgoingTxsResponse,
+        WalletInfoResponse,
+        WalletInfoQuery,
+        KeypairsResponse,
+        CurrentBlockResponse,
         ApiProblem,
     )),
     modifiers(&SecurityAddon),
@@ -112,9 +129,13 @@ mod tests {
                 "/v1/blocks/latest",
                 "/v1/blocks/{num}",
                 "/v1/debug",
+                "/v1/mining/current-block",
                 "/v1/supply",
+                "/v1/transactions/outgoing",
                 "/v1/transactions/status",
                 "/v1/transactions/status:query",
+                "/v1/wallet",
+                "/v1/wallet/keypairs",
             ]
         );
     }

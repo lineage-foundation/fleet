@@ -4,8 +4,10 @@ pub mod balances;
 pub mod blockchain;
 pub mod blocks;
 pub mod debug;
+pub mod mining;
 pub mod supply;
 pub mod transactions;
+pub mod wallet;
 
 use axum::routing::{get, post};
 use axum::{middleware, Router};
@@ -27,12 +29,14 @@ pub fn storage_router(state: ApiState) -> Router {
     build_router(state, true, false)
 }
 
-/// Router for a miner node: `/v1/debug` (PR1 slice).
+/// Router for a miner node: `/v1/debug` + wallet/keypairs/outgoing-txs (when it carries
+/// a wallet) + current mining block (when it mines).
 pub fn miner_router(state: ApiState) -> Router {
     build_router(state, false, false)
 }
 
-/// Router for a user node: `/v1/debug` (PR1 slice).
+/// Router for a user node: `/v1/debug` + wallet/keypairs/outgoing-txs (it always
+/// carries a wallet).
 pub fn user_router(state: ApiState) -> Router {
     build_router(state, false, false)
 }
@@ -84,6 +88,21 @@ fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool) -> R
         mounted.push("v1/transactions/status".to_owned());
         mounted.push("v1/transactions/status:query".to_owned());
     }
+
+    if state.wallet_db.is_some() {
+        router = router
+            .route("/v1/wallet", get(wallet::get_wallet_info))
+            .route("/v1/wallet/keypairs", get(wallet::get_keypairs))
+            .route("/v1/transactions/outgoing", get(transactions::get_outgoing_txs));
+        mounted.push("v1/wallet".to_owned());
+        mounted.push("v1/wallet/keypairs".to_owned());
+        mounted.push("v1/transactions/outgoing".to_owned());
+    }
+
+    if state.current_block.is_some() {
+        router = router.route("/v1/mining/current-block", get(mining::get_current_block));
+        mounted.push("v1/mining/current-block".to_owned());
+    }
     state.mounted_routes = mounted;
 
     router
@@ -102,11 +121,15 @@ mod tests {
     use fleet_core::comms_handler::TcpTlsConfig;
     use fleet_core::configurations::{DbMode, MempoolNodeSharedConfig, MinerWhitelist};
     use fleet_core::db_utils::new_db;
-    use fleet_core::interfaces::{DruidPool, MempoolApi, MempoolError, NodeType, Response, TxStatus, TxStatusType};
+    use fleet_core::interfaces::{
+        CurrentBlockWithMutex, DruidPool, MempoolApi, MempoolError, NodeType, PaymentResponse, Response, TxStatus,
+        TxStatusType, UserApi,
+    };
     use fleet_core::threaded_call::ThreadedCallChannel;
     use fleet_core::tracked_utxo::TrackedUtxoSet;
     use fleet_core::utils::{ApiKeys, RoutesPoWInfo};
     use fleet_core::Node;
+    use fleet_wallet::WalletDb;
     use http_body_util::BodyExt;
     use serde_json::Value;
     use tower::ServiceExt;
@@ -194,6 +217,29 @@ mod tests {
         }
     }
 
+    /// Minimal `UserApi` test double: `make_payment` returns a canned failure
+    /// response. The coverage test only needs a state that satisfies the
+    /// `user_router`/`miner_router` constructors; it never actually calls into the
+    /// user threaded-call sender.
+    #[derive(Default)]
+    struct TestUser;
+
+    impl UserApi for TestUser {
+        fn make_payment(
+            &mut self,
+            _address: String,
+            _amount: TokenAmount,
+            _locktime: Option<u64>,
+        ) -> PaymentResponse {
+            PaymentResponse {
+                success: false,
+                reason: "not implemented in test mock".to_owned(),
+                tx_hash: String::new(),
+                tx: None,
+            }
+        }
+    }
+
     /// Build a mempool `ApiState` backed by `mempool`, answering threaded calls from a
     /// spawned background task for the lifetime of the test.
     async fn mempool_state(mempool: TestMempool) -> ApiState {
@@ -243,6 +289,87 @@ mod tests {
             None,
         )));
         ApiState::storage(node, db, api_keys(vec![]), empty_routes_pow())
+    }
+
+    fn empty_wallet_db() -> WalletDb {
+        WalletDb::new(DbMode::InMemory, None, None, None).expect("empty wallet db")
+    }
+
+    fn empty_current_block() -> CurrentBlockWithMutex {
+        Arc::new(tokio::sync::Mutex::new(None))
+    }
+
+    /// A solo-miner `ApiState`: no embedded user node/DB/threaded-call sender, but it
+    /// carries both a wallet DB and a current-block mutex — enough to exercise the
+    /// wallet/keypairs/outgoing-txs and mining/current-block resources without needing
+    /// a `UserApi` test double.
+    async fn miner_solo_state() -> ApiState {
+        let node = test_node(NodeType::Miner).await;
+        ApiState::miner_solo(
+            node,
+            api_keys(vec![]),
+            empty_routes_pow(),
+            empty_wallet_db(),
+            empty_current_block(),
+        )
+    }
+
+    /// A user `ApiState`: DB handle + `TestUser` threaded-call sender + wallet DB,
+    /// answering `UserApi` calls from a spawned background task for the lifetime of
+    /// the test — enough to exercise `user_router`'s full route set.
+    async fn user_state() -> ApiState {
+        let node = test_node(NodeType::User).await;
+        let db = Arc::new(Mutex::new(new_db(
+            DbMode::InMemory,
+            &fleet_storage::DB_SPEC,
+            None,
+            None,
+        )));
+        let ThreadedCallChannel { tx, mut rx } = ThreadedCallChannel::<dyn UserApi>::default();
+
+        tokio::spawn(async move {
+            let mut user = TestUser;
+            while let Some(f) = rx.recv().await {
+                f(&mut user);
+            }
+        });
+
+        ApiState::user(node, db, tx, api_keys(vec![]), empty_routes_pow(), empty_wallet_db())
+    }
+
+    /// A miner-with-embedded-user `ApiState` (mirrors `miner_node_with_user_routes`):
+    /// same wallet DB / current-block capabilities as `miner_solo_state`, plus an
+    /// aux user node and a `TestUser` threaded-call sender. Used only to confirm
+    /// that the embedded user node doesn't change `miner_router`'s mounted routes
+    /// (mounting is keyed off `wallet_db`/`current_block`, not `aux_node`).
+    async fn miner_with_user_state() -> ApiState {
+        let node = test_node(NodeType::Miner).await;
+        let aux_node = test_node(NodeType::User).await;
+        let db = Arc::new(Mutex::new(new_db(
+            DbMode::InMemory,
+            &fleet_storage::DB_SPEC,
+            None,
+            None,
+        )));
+        let ThreadedCallChannel { tx, mut rx } = ThreadedCallChannel::<dyn UserApi>::default();
+
+        tokio::spawn(async move {
+            let mut user = TestUser;
+            while let Some(f) = rx.recv().await {
+                f(&mut user);
+            }
+        });
+
+        ApiState::miner(
+            node,
+            aux_node,
+            db,
+            tx,
+            api_keys(vec![]),
+            empty_routes_pow(),
+            empty_wallet_db(),
+            empty_current_block(),
+        )
     }
 
     #[tokio::test]
@@ -550,6 +677,134 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_wallet_info_returns_200_with_zeroed_totals_for_empty_wallet() {
+        let app = miner_router(miner_solo_state().await);
+
+        let response = app
+            .oneshot(Request::builder().uri("/v1/wallet").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["running_total_tokens"], 0);
+        assert_eq!(body["locked_total_tokens"], 0);
+        assert_eq!(body["available_total_tokens"], 0);
+        assert_eq!(body["item_total"], serde_json::json!({}));
+        assert_eq!(body["addresses"], serde_json::json!({}));
+    }
+
+    #[tokio::test]
+    async fn get_wallet_info_accepts_page_and_spent_query_params() {
+        let app = miner_router(miner_solo_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/wallet?page=0&spent=true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["addresses"], serde_json::json!({}));
+    }
+
+    #[tokio::test]
+    async fn get_keypairs_returns_200_with_empty_addresses_for_empty_wallet() {
+        let app = miner_router(miner_solo_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/wallet/keypairs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["addresses"], serde_json::json!({}));
+    }
+
+    #[tokio::test]
+    async fn get_outgoing_txs_returns_200_empty_array_for_empty_wallet() {
+        let app = miner_router(miner_solo_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/transactions/outgoing")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["transactions"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn get_current_block_returns_200_null_when_none_received() {
+        let app = miner_router(miner_solo_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/mining/current-block")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["block"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn wallet_and_mining_resources_are_not_mounted_on_non_wallet_non_mining_routers() {
+        for app in [
+            storage_router(empty_storage_state().await),
+            mempool_router(mempool_state(TestMempool::default()).await),
+        ] {
+            for (method, uri) in [
+                ("GET", "/v1/wallet"),
+                ("GET", "/v1/wallet/keypairs"),
+                ("GET", "/v1/transactions/outgoing"),
+                ("GET", "/v1/mining/current-block"),
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(response.status(), StatusCode::NOT_FOUND, "unexpected mount: {method} {uri}");
+                assert_ne!(
+                    response.headers().get(header::CONTENT_TYPE),
+                    Some(&header::HeaderValue::from_static("application/problem+json")),
+                    "route should be unmounted (axum default 404), not our typed 404: {method} {uri}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn mempool_only_resources_are_not_mounted_on_non_mempool_routers() {
         let app = storage_router(empty_storage_state().await);
 
@@ -615,13 +870,42 @@ mod tests {
         assert_eq!(authorized.status(), StatusCode::OK);
     }
 
+    #[tokio::test]
+    async fn miner_with_user_router_mounts_the_same_routes_as_miner_solo() {
+        async fn reported_routes(app: Router) -> Vec<String> {
+            let response = app
+                .oneshot(Request::builder().uri("/v1/debug").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let data: DebugData = serde_json::from_slice(
+                &response.into_body().collect().await.unwrap().to_bytes(),
+            )
+            .expect("valid DebugData json");
+            data.node_api
+        }
+
+        let solo = reported_routes(miner_router(miner_solo_state().await)).await;
+        let with_user = reported_routes(miner_router(miner_with_user_state().await)).await;
+
+        assert_eq!(
+            solo, with_user,
+            "an embedded user node (aux_node/user_calls_tx) shouldn't change which routes \
+             miner_router mounts — mounting is keyed off wallet_db/current_block"
+        );
+    }
+
     /// Cross-checks `ApiDoc` (see `openapi.rs`) against what's actually mounted.
     ///
     /// Each router reports its own mounted paths on `GET /v1/debug` (`node_api`,
     /// built alongside the `.route()` calls in `build_router`). This test hits
-    /// `/v1/debug` on every node router, unions the reported paths, and asserts
-    /// that's exactly the path set `ApiDoc` documents: nothing documented but
-    /// unmounted, nothing mounted but undocumented.
+    /// `/v1/debug` on every one of the five node router builders (`pre_launch`,
+    /// `storage`, `mempool`, `miner`, `user`), unions the reported paths, and
+    /// asserts that's exactly the path set `ApiDoc` documents: nothing documented
+    /// but unmounted, nothing mounted but undocumented. `miner_router` is exercised
+    /// via a solo-miner state; `miner_with_user_router_mounts_the_same_routes_as_miner_solo`
+    /// below confirms the with-embedded-user variant doesn't add anything beyond
+    /// that, so it isn't unioned in separately here.
     ///
     /// This isn't a raw reflection of axum's internal route table (axum doesn't
     /// expose one), so it still relies on `node_api` staying in sync with the
@@ -650,11 +934,15 @@ mod tests {
         .await;
         let storage = reported_routes(storage_router(empty_storage_state().await)).await;
         let mempool = reported_routes(mempool_router(mempool_state(TestMempool::default()).await)).await;
+        let miner = reported_routes(miner_router(miner_solo_state().await)).await;
+        let user = reported_routes(user_router(user_state().await)).await;
 
         let mut mounted: Vec<String> = pre_launch
             .into_iter()
             .chain(storage)
             .chain(mempool)
+            .chain(miner)
+            .chain(user)
             .map(|route| format!("/{route}"))
             .collect();
         mounted.sort_unstable();

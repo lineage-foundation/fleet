@@ -90,6 +90,7 @@ async fn run_node(matches: &ArgMatches<'_>) {
     let api_handle = tokio::spawn({
         let (db, node, api_addr, api_tls, api_keys, api_pow_info) = api_inputs;
         let threaded_calls_tx = threaded_calls_tx.clone();
+        let wallet_db = wallet_db.clone();
 
         info!("REST API started on port {:?}", api_addr.port());
         info!("");
@@ -104,6 +105,7 @@ async fn run_node(matches: &ArgMatches<'_>) {
                 threaded_calls_tx,
                 api_keys,
                 api_pow_info,
+                wallet_db,
             ));
 
             if let Some(api_tls) = api_tls {
