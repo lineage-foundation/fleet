@@ -1,9 +1,10 @@
 //! `/v1` route handlers and per-node routers.
 
+pub mod blockchain;
 pub mod blocks;
 pub mod debug;
 
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{middleware, Router};
 use utoipa::OpenApi as _;
 use utoipa_swagger_ui::SwaggerUi;
@@ -45,8 +46,20 @@ fn build_router(mut state: ApiState, with_blocks: bool) -> Router {
     let mut mounted = vec!["v1/debug".to_owned()];
 
     if with_blocks {
-        router = router.route("/v1/blocks/latest", get(blocks::get_latest_block));
+        router = router
+            .route("/v1/blocks/latest", get(blocks::get_latest_block))
+            .route("/v1/blocks/{num}", get(blocks::get_block_by_num))
+            .route("/v1/blocks", get(blocks::get_blocks_batch))
+            .route("/v1/blockchain-entries/{key}", get(blockchain::get_blockchain_entry))
+            .route(
+                "/v1/blockchain-entries/query",
+                post(blockchain::query_blockchain_entries),
+            );
         mounted.push("v1/blocks/latest".to_owned());
+        mounted.push("v1/blocks/{num}".to_owned());
+        mounted.push("v1/blocks".to_owned());
+        mounted.push("v1/blockchain-entries/{key}".to_owned());
+        mounted.push("v1/blockchain-entries/query".to_owned());
     }
     state.mounted_routes = mounted;
 
@@ -100,6 +113,17 @@ mod tests {
         serde_json::from_slice(&bytes).expect("valid json body")
     }
 
+    async fn empty_storage_state() -> ApiState {
+        let node = test_node(NodeType::Storage).await;
+        let db = Arc::new(Mutex::new(new_db(
+            DbMode::InMemory,
+            &fleet_storage::DB_SPEC,
+            None,
+            None,
+        )));
+        ApiState::storage(node, db, api_keys(vec![]), empty_routes_pow())
+    }
+
     #[tokio::test]
     async fn get_debug_returns_200_and_typed_debug_data() {
         let node = test_node(NodeType::PreLaunch).await;
@@ -150,6 +174,129 @@ mod tests {
         let problem = body_json(response).await;
         assert_eq!(problem["status"], 404);
         assert!(problem["detail"].is_string());
+    }
+
+    #[tokio::test]
+    async fn get_block_by_num_returns_404_problem_json_on_empty_db() {
+        let app = storage_router(empty_storage_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/blocks/1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 404);
+        assert!(problem["detail"].is_string());
+    }
+
+    #[tokio::test]
+    async fn get_blocks_batch_returns_200_empty_array_on_empty_db() {
+        let app = storage_router(empty_storage_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/blocks?num=1&num=2")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body, Value::Array(vec![]));
+    }
+
+    #[tokio::test]
+    async fn get_blockchain_entry_returns_404_problem_json_on_empty_db() {
+        let app = storage_router(empty_storage_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/blockchain-entries/some-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 404);
+        assert!(problem["detail"].is_string());
+    }
+
+    #[tokio::test]
+    async fn query_blockchain_entries_returns_200_empty_array_on_empty_db() {
+        let app = storage_router(empty_storage_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/blockchain-entries/query")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"keys":["some-key","other-key"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body, Value::Array(vec![]));
+    }
+
+    #[tokio::test]
+    async fn storage_only_resources_are_not_mounted_on_non_storage_routers() {
+        let node = test_node(NodeType::PreLaunch).await;
+        let state = ApiState::pre_launch(node, api_keys(vec![]), empty_routes_pow());
+        let app = pre_launch_router(state);
+
+        for (method, uri) in [
+            ("GET", "/v1/blocks/1"),
+            ("GET", "/v1/blocks"),
+            ("GET", "/v1/blockchain-entries/some-key"),
+            ("POST", "/v1/blockchain-entries/query"),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "unexpected mount: {method} {uri}");
+            assert_ne!(
+                response.headers().get(header::CONTENT_TYPE),
+                Some(&header::HeaderValue::from_static("application/problem+json")),
+                "route should be unmounted (axum default 404), not our typed 404: {method} {uri}"
+            );
+        }
     }
 
     #[tokio::test]
