@@ -163,3 +163,72 @@ pub async fn get_keypairs(State(state): State<ApiState>) -> Result<Json<Keypairs
     let addresses = serde_json::to_value(&addresses).map_err(|err| ApiProblem::internal(err.to_string()))?;
     Ok(Json(KeypairsResponse { addresses }))
 }
+
+/// A newly generated payment address.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct NewAddressResponse {
+    /// The newly generated payment address.
+    pub address: String,
+}
+
+/// Generate and return a new payment address for this node's wallet.
+#[utoipa::path(
+    post,
+    path = "/v1/wallet/addresses",
+    tag = "wallet",
+    responses(
+        (status = 201, description = "A newly generated payment address", body = NewAddressResponse),
+        (status = 500, description = "This node does not expose a wallet", body = ApiProblem, content_type = "application/problem+json"),
+    ),
+    security(("api_key" = [])),
+)]
+pub async fn post_new_address(
+    State(state): State<ApiState>,
+) -> Result<(axum::http::StatusCode, Json<NewAddressResponse>), ApiProblem> {
+    let mut wallet_db = state
+        .wallet_db
+        .clone()
+        .ok_or_else(|| ApiProblem::internal("this node does not expose a wallet"))?;
+    let (address, _) = wallet_db.generate_payment_address();
+    Ok((axum::http::StatusCode::CREATED, Json(NewAddressResponse { address })))
+}
+
+/// Request body for `PUT /v1/wallet/passphrase`.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ChangePassphraseRequest {
+    /// The wallet's current passphrase.
+    pub old_passphrase: String,
+    /// The passphrase to change to.
+    pub new_passphrase: String,
+}
+
+/// Change this node's wallet passphrase.
+#[utoipa::path(
+    put,
+    path = "/v1/wallet/passphrase",
+    tag = "wallet",
+    request_body = ChangePassphraseRequest,
+    responses(
+        (status = 204, description = "Passphrase changed"),
+        (status = 400, description = "The new passphrase was blank", body = ApiProblem, content_type = "application/problem+json"),
+        (status = 500, description = "This node does not expose a wallet, or the passphrase change failed", body = ApiProblem, content_type = "application/problem+json"),
+    ),
+    security(("api_key" = [])),
+)]
+pub async fn put_passphrase(
+    State(state): State<ApiState>,
+    Json(body): Json<ChangePassphraseRequest>,
+) -> Result<axum::http::StatusCode, ApiProblem> {
+    let mut wallet_db = state
+        .wallet_db
+        .clone()
+        .ok_or_else(|| ApiProblem::internal("this node does not expose a wallet"))?;
+    if body.new_passphrase.is_empty() {
+        return Err(ApiProblem::bad_request("new passphrase must not be blank"));
+    }
+    wallet_db
+        .change_wallet_passphrase(body.old_passphrase, body.new_passphrase)
+        .await
+        .map_err(|err| ApiProblem::internal(err.to_string()))?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}

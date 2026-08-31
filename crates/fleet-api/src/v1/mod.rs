@@ -9,7 +9,7 @@ pub mod supply;
 pub mod transactions;
 pub mod wallet;
 
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{middleware, Router};
 use utoipa::OpenApi as _;
 use utoipa_swagger_ui::SwaggerUi;
@@ -93,9 +93,13 @@ fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool) -> R
         router = router
             .route("/v1/wallet", get(wallet::get_wallet_info))
             .route("/v1/wallet/keypairs", get(wallet::get_keypairs))
+            .route("/v1/wallet/addresses", post(wallet::post_new_address))
+            .route("/v1/wallet/passphrase", put(wallet::put_passphrase))
             .route("/v1/transactions/outgoing", get(transactions::get_outgoing_txs));
         mounted.push("v1/wallet".to_owned());
         mounted.push("v1/wallet/keypairs".to_owned());
+        mounted.push("v1/wallet/addresses".to_owned());
+        mounted.push("v1/wallet/passphrase".to_owned());
         mounted.push("v1/transactions/outgoing".to_owned());
     }
 
@@ -733,6 +737,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn post_new_address_returns_201_with_a_new_address() {
+        let app = miner_router(miner_solo_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/wallet/addresses")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = body_json(response).await;
+        let address = body["address"].as_str().expect("address is a string");
+        assert!(!address.is_empty());
+    }
+
+    #[tokio::test]
+    async fn put_passphrase_returns_400_problem_json_for_blank_new_passphrase() {
+        let app = miner_router(miner_solo_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/v1/wallet/passphrase")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"old_passphrase":"","new_passphrase":""}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 400);
+        assert!(problem["detail"].is_string());
+    }
+
+    #[tokio::test]
+    async fn put_passphrase_returns_204_when_old_passphrase_matches() {
+        let app = miner_router(miner_solo_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/v1/wallet/passphrase")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"old_passphrase":"","new_passphrase":"hunter2"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
     async fn get_outgoing_txs_returns_200_empty_array_for_empty_wallet() {
         let app = miner_router(miner_solo_state().await);
 
@@ -779,6 +850,8 @@ mod tests {
             for (method, uri) in [
                 ("GET", "/v1/wallet"),
                 ("GET", "/v1/wallet/keypairs"),
+                ("POST", "/v1/wallet/addresses"),
+                ("PUT", "/v1/wallet/passphrase"),
                 ("GET", "/v1/transactions/outgoing"),
                 ("GET", "/v1/mining/current-block"),
             ] {
