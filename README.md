@@ -145,6 +145,7 @@ Routes ported so far:
 | `GET /v1/transactions/status` | mempool |
 | `POST /v1/transactions/status:query` | mempool |
 | `POST /v1/transactions` | mempool |
+| `POST /v1/items` | mempool, user |
 | `GET /v1/wallet` | user, miner |
 | `GET /v1/wallet/keypairs` | user, miner |
 | `POST /v1/wallet/addresses` | user, miner |
@@ -160,7 +161,7 @@ Routes ported so far:
 
 Wallet routes are mounted on any node carrying a wallet DB (user, and a miner whether solo or paired with an embedded user node); `mining/current-block` is mounted on any node that mines.
 
-`POST /v1/items`, `POST /v1/payments`, and `POST /v1/donation-requests` are the next phase; they aren't in this API yet.
+`POST /v1/payments` and `POST /v1/donation-requests` are the next phase; they aren't in this API yet.
 
 Routes that have a configured key require an `x-api-key` header; this is documented as an OpenAPI security scheme (`api_key`) in the spec. `pre_launch` has no HTTP API surface.
 
