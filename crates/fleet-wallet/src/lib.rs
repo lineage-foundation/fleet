@@ -263,6 +263,11 @@ impl WalletDb {
         self.locked_coinbase.clone()
     }
 
+    /// Get the underlying database handle, e.g. to hand to the REST API state.
+    pub fn db_arc(&self) -> Arc<Mutex<SimpleDb>> {
+        self.db.clone()
+    }
+
     /// Get locked coinbase value
     pub async fn get_locked_coinbase(&self) -> LockedCoinbase {
         self.locked_coinbase.lock().unwrap().clone()

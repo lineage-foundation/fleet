@@ -5,7 +5,7 @@ use fleet_core::{
     loop_wait_connnect_to_peers_async, loops_re_connect_disconnect, shutdown_connections,
     ResponseResult,
 };
-use fleet_api::routes;
+use fleet_api::ApiState;
 use fleet_miner::MinerNode;
 use fleet_node_common::ExtraNodeParams;
 use fleet_user::UserNode;
@@ -130,51 +130,66 @@ async fn run_node(matches: &ArgMatches<'_>) {
                 }
             });
 
-            // User / Miner combined warp API
-            let warp_handle = tokio::spawn({
+            // User / Miner combined REST API
+            let api_handle = tokio::spawn({
                 let threaded_calls_tx = threaded_calls_tx;
                 let (
                     (db, user_node, api_addr, api_tls, api_keys, api_pow_info),
-                    (_, miner_node, _, _, _, current_block, _),
+                    (_, miner_node, _, _, _, _current_block, _),
                 ) = api_inputs;
 
-                info!("Warp API started on port {:?}", api_addr.port());
+                info!("REST API started on port {:?}", api_addr.port());
                 info!("");
 
                 let mut bind_address = "0.0.0.0:0".parse::<SocketAddr>().unwrap();
                 bind_address.set_port(api_addr.port());
 
                 async move {
-                    let serve = warp::serve(routes::miner_node_with_user_routes(
+                    let app = fleet_api::miner_router(ApiState::miner(
+                        miner_node,
+                        user_node,
+                        db.db_arc(),
+                        threaded_calls_tx,
                         api_keys,
                         api_pow_info,
-                        current_block,
-                        db,
-                        miner_node,
-                        threaded_calls_tx,
-                        user_node,
                     ));
+
                     if let Some(api_tls) = api_tls {
-                        serve
-                            .tls()
-                            .key(&api_tls.pem_pkcs8_private_keys)
-                            .cert(&api_tls.pem_certs)
-                            .run(bind_address)
-                            .await;
-                    } else {
-                        serve.run(bind_address).await;
+                        let config = match axum_server::tls_rustls::RustlsConfig::from_pem(
+                            api_tls.pem_certs.into_bytes(),
+                            api_tls.pem_pkcs8_private_keys.into_bytes(),
+                        )
+                        .await
+                        {
+                            Ok(config) => config,
+                            Err(e) => {
+                                tracing::error!("Failed to load TLS config for REST API: {e:?}");
+                                return;
+                            }
+                        };
+                        if let Err(e) = axum_server::bind_rustls(bind_address, config)
+                            .serve(app.into_make_service())
+                            .await
+                        {
+                            tracing::error!("REST API server error: {e:?}");
+                        }
+                    } else if let Err(e) = axum_server::bind(bind_address)
+                        .serve(app.into_make_service())
+                        .await
+                    {
+                        tracing::error!("REST API server error: {e:?}");
                     }
                 }
             });
 
-            let (result, result_user, conn, conn_user, disconn, disconn_user, warp_result) = tokio::join!(
+            let (result, result_user, conn, conn_user, disconn, disconn_user, api_result) = tokio::join!(
                 main_loop_handle,
                 user_main_loop_handle,
                 conn_loop_handle,
                 user_conn_loop_handle,
                 disconn_loop_handle,
                 user_disconn_loop_handle,
-                warp_handle
+                api_handle
             );
 
             result.unwrap();
@@ -183,52 +198,66 @@ async fn run_node(matches: &ArgMatches<'_>) {
             result_user.unwrap();
             conn_user.unwrap();
             disconn_user.unwrap();
-            warp_result.unwrap();
+            api_result.unwrap();
         }
         None => {
-            // Miner warp API
-            let warp_handle = tokio::spawn({
-                let (db, miner_node, api_addr, api_tls, api_keys, current_block, api_pow_info) =
+            // Miner REST API
+            let api_handle = tokio::spawn({
+                let (_db, miner_node, api_addr, api_tls, api_keys, _current_block, api_pow_info) =
                     miner_api_inputs;
 
-                info!("Warp API started on port {:?}", api_addr.port());
+                info!("REST API started on port {:?}", api_addr.port());
                 info!("");
 
                 let mut bind_address = "0.0.0.0:0".parse::<SocketAddr>().unwrap();
                 bind_address.set_port(api_addr.port());
 
                 async move {
-                    let serve = warp::serve(routes::miner_node_routes(
+                    let app = fleet_api::miner_router(ApiState::miner_solo(
+                        miner_node,
                         api_keys,
                         api_pow_info,
-                        current_block,
-                        db,
-                        miner_node,
                     ));
+
                     if let Some(api_tls) = api_tls {
-                        serve
-                            .tls()
-                            .key(&api_tls.pem_pkcs8_private_keys)
-                            .cert(&api_tls.pem_certs)
-                            .run(bind_address)
-                            .await;
-                    } else {
-                        serve.run(bind_address).await;
+                        let config = match axum_server::tls_rustls::RustlsConfig::from_pem(
+                            api_tls.pem_certs.into_bytes(),
+                            api_tls.pem_pkcs8_private_keys.into_bytes(),
+                        )
+                        .await
+                        {
+                            Ok(config) => config,
+                            Err(e) => {
+                                tracing::error!("Failed to load TLS config for REST API: {e:?}");
+                                return;
+                            }
+                        };
+                        if let Err(e) = axum_server::bind_rustls(bind_address, config)
+                            .serve(app.into_make_service())
+                            .await
+                        {
+                            tracing::error!("REST API server error: {e:?}");
+                        }
+                    } else if let Err(e) = axum_server::bind(bind_address)
+                        .serve(app.into_make_service())
+                        .await
+                    {
+                        tracing::error!("REST API server error: {e:?}");
                     }
                 }
             });
 
-            let (result, conn, disconn, warp_result) = tokio::join!(
+            let (result, conn, disconn, api_result) = tokio::join!(
                 main_loop_handle,
                 conn_loop_handle,
                 disconn_loop_handle,
-                warp_handle
+                api_handle
             );
 
             result.unwrap();
             conn.unwrap();
             disconn.unwrap();
-            warp_result.unwrap();
+            api_result.unwrap();
         }
     }
 }
