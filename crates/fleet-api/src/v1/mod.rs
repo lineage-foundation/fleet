@@ -5,8 +5,10 @@ pub mod balances;
 pub mod blockchain;
 pub mod blocks;
 pub mod debug;
+pub mod donations;
 pub mod items;
 pub mod mining;
+pub mod payments;
 pub mod supply;
 pub mod transactions;
 pub mod tx_convert;
@@ -130,14 +132,21 @@ fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool, is_u
             .route(
                 "/v1/transactions:deserialize",
                 post(transactions::post_deserialize_transactions),
-            );
+            )
+            .route("/v1/donation-requests", post(donations::post_donation_request));
         mounted.push("v1/transactions:serialize".to_owned());
         mounted.push("v1/transactions:deserialize".to_owned());
+        mounted.push("v1/donation-requests".to_owned());
     }
 
     if state.mempool_calls_tx.is_some() || state.user_calls_tx.is_some() {
         router = router.route("/v1/items", post(items::post_create_item));
         mounted.push("v1/items".to_owned());
+    }
+
+    if state.user_calls_tx.is_some() {
+        router = router.route("/v1/payments", post(payments::post_payment));
+        mounted.push("v1/payments".to_owned());
     }
     state.mounted_routes = mounted;
 
@@ -263,10 +272,9 @@ mod tests {
         }
     }
 
-    /// Minimal `UserApi` test double: `make_payment` returns a canned failure
-    /// response. The coverage test only needs a state that satisfies the
-    /// `user_router`/`miner_router` constructors; it never actually calls into the
-    /// user threaded-call sender.
+    /// Minimal `UserApi` test double: `make_payment` returns a canned success
+    /// response, exercising the address-payment success path in
+    /// `v1::payments::post_payment`.
     #[derive(Default)]
     struct TestUser;
 
@@ -278,9 +286,9 @@ mod tests {
             _locktime: Option<u64>,
         ) -> PaymentResponse {
             PaymentResponse {
-                success: false,
-                reason: "not implemented in test mock".to_owned(),
-                tx_hash: String::new(),
+                success: true,
+                reason: "ok".to_owned(),
+                tx_hash: "test_payment_tx_hash".to_owned(),
                 tx: None,
             }
         }
@@ -386,8 +394,9 @@ mod tests {
     /// A miner-with-embedded-user `ApiState` (mirrors `miner_node_with_user_routes`):
     /// same wallet DB / current-block capabilities as `miner_solo_state`, plus an
     /// aux user node and a `TestUser` threaded-call sender. The embedded user node
-    /// (its `user_calls_tx`) adds `/v1/items` over a solo miner; every other route is
-    /// keyed off `wallet_db`/`current_block`, so the two share the rest of their set.
+    /// (its `user_calls_tx`) adds the user-capability routes (e.g. `/v1/items`,
+    /// `/v1/payments`) over a solo miner; wallet/mining routes are keyed off
+    /// `wallet_db`/`current_block`, so the two share those.
     async fn miner_with_user_state() -> ApiState {
         let node = test_node(NodeType::Miner).await;
         let aux_node = test_node(NodeType::User).await;
@@ -1445,15 +1454,17 @@ mod tests {
         let mut solo = reported_routes(miner_router(miner_solo_state().await)).await;
         let with_user = reported_routes(miner_router(miner_with_user_state().await)).await;
 
-        // Every route mounting is keyed off wallet_db/current_block, except /v1/items,
-        // which is keyed off mempool_calls_tx/user_calls_tx: a miner paired with an
-        // embedded user node (user_calls_tx) can create items through it, a solo miner
-        // (neither sender) cannot.
+        // Every route mounting is keyed off wallet_db/current_block, except
+        // /v1/items (mempool_calls_tx/user_calls_tx) and /v1/payments
+        // (user_calls_tx): a miner paired with an embedded user node (user_calls_tx)
+        // can create items and make payments through it, a solo miner (neither
+        // sender) cannot.
         solo.push("v1/items".to_owned());
+        solo.push("v1/payments".to_owned());
         assert_eq!(
             solo, with_user,
             "an embedded user node (aux_node/user_calls_tx) should add exactly /v1/items \
-             to the routes miner_router mounts"
+             and /v1/payments to the routes miner_router mounts"
         );
     }
 
@@ -1663,6 +1674,226 @@ mod tests {
                     Request::builder()
                         .method("POST")
                         .uri("/v1/items")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert_ne!(
+                response.headers().get(header::CONTENT_TYPE),
+                Some(&header::HeaderValue::from_static("application/problem+json")),
+                "route should be unmounted (axum default 404), not our typed 404"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn post_payment_address_returns_202_with_asset_and_tx_hash_on_user_node() {
+        let app = user_router(user_state().await);
+
+        let body = serde_json::json!({
+            "kind": "address",
+            "address": "pay_addr",
+            "amount": 5,
+            "passphrase": "",
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/payments")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = body_json(response).await;
+        assert_eq!(body["to_address"], "pay_addr");
+        assert_eq!(body["amount"], serde_json::json!({"kind": "token", "amount": 5}));
+        assert_eq!(body["tx_hash"], "test_payment_tx_hash");
+    }
+
+    #[tokio::test]
+    async fn post_payment_ip_returns_202_with_null_tx_hash_on_user_node() {
+        let app = user_router(user_state().await);
+
+        let body = serde_json::json!({
+            "kind": "ip",
+            "address": "127.0.0.1:12345",
+            "amount": 5,
+            "passphrase": "",
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/payments")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = body_json(response).await;
+        assert_eq!(body["tx_hash"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn post_payment_ip_returns_400_problem_json_for_a_non_socket_address() {
+        let app = user_router(user_state().await);
+
+        let body = serde_json::json!({
+            "kind": "ip",
+            "address": "not-an-addr",
+            "amount": 5,
+            "passphrase": "",
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/payments")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 400);
+    }
+
+    #[tokio::test]
+    async fn post_payment_address_returns_202_on_miner_with_embedded_user_node() {
+        let app = miner_router(miner_with_user_state().await);
+
+        let body = serde_json::json!({
+            "kind": "address",
+            "address": "pay_addr",
+            "amount": 5,
+            "passphrase": "",
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/payments")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = body_json(response).await;
+        assert_eq!(body["to_address"], "pay_addr");
+        assert_eq!(body["tx_hash"], "test_payment_tx_hash");
+    }
+
+    #[tokio::test]
+    async fn post_payment_route_is_not_mounted_where_user_calls_tx_is_absent() {
+        for app in [
+            storage_router(empty_storage_state().await),
+            mempool_router(mempool_state(TestMempool::default()).await),
+            miner_router(miner_solo_state().await),
+        ] {
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/payments")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert_ne!(
+                response.headers().get(header::CONTENT_TYPE),
+                Some(&header::HeaderValue::from_static("application/problem+json")),
+                "route should be unmounted (axum default 404), not our typed 404"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn post_donation_request_returns_202_on_user_node() {
+        let app = user_router(user_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/donation-requests")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"address":"127.0.0.1:12345"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
+    async fn post_donation_request_returns_400_problem_json_for_a_non_socket_address() {
+        let app = user_router(user_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/donation-requests")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"address":"nope"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 400);
+    }
+
+    #[tokio::test]
+    async fn post_donation_request_route_is_not_mounted_on_non_user_routers() {
+        // Donation requests are user-only: unlike /v1/payments and /v1/items, even a
+        // miner paired with an embedded user node (miner_with_user_state) must not
+        // expose this route.
+        for app in [
+            mempool_router(mempool_state(TestMempool::default()).await),
+            storage_router(empty_storage_state().await),
+            miner_router(miner_with_user_state().await),
+        ] {
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/donation-requests")
                         .body(Body::empty())
                         .unwrap(),
                 )
