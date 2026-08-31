@@ -32,7 +32,10 @@ use crate::v1::transactions::{
 };
 #[allow(unused_imports)]
 use crate::v1::wallet::{
-    __path_get_keypairs, __path_get_wallet_info, get_keypairs, get_wallet_info, KeypairsResponse, WalletInfoQuery,
+    __path_get_keypairs, __path_get_wallet_info, __path_post_import_keypairs, __path_post_new_address,
+    __path_post_running_total_refresh, __path_put_passphrase, get_keypairs, get_wallet_info, post_import_keypairs,
+    post_new_address, post_running_total_refresh, put_passphrase, ChangePassphraseRequest, ImportKeypairsRequest,
+    ImportKeypairsResponse, KeypairsResponse, NewAddressResponse, RunningTotalRefreshRequest, WalletInfoQuery,
     WalletInfoResponse,
 };
 
@@ -60,6 +63,10 @@ use crate::v1::wallet::{
         get_outgoing_txs,
         get_wallet_info,
         get_keypairs,
+        post_import_keypairs,
+        post_new_address,
+        put_passphrase,
+        post_running_total_refresh,
         get_current_block,
     ),
     components(schemas(
@@ -79,6 +86,11 @@ use crate::v1::wallet::{
         WalletInfoResponse,
         WalletInfoQuery,
         KeypairsResponse,
+        ImportKeypairsRequest,
+        ImportKeypairsResponse,
+        NewAddressResponse,
+        ChangePassphraseRequest,
+        RunningTotalRefreshRequest,
         CurrentBlockResponse,
         ApiProblem,
     )),
@@ -135,7 +147,10 @@ mod tests {
                 "/v1/transactions/status",
                 "/v1/transactions/status:query",
                 "/v1/wallet",
+                "/v1/wallet/addresses",
                 "/v1/wallet/keypairs",
+                "/v1/wallet/passphrase",
+                "/v1/wallet/running-total:refresh",
             ]
         );
     }

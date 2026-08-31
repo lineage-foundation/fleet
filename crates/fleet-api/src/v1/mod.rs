@@ -9,7 +9,7 @@ pub mod supply;
 pub mod transactions;
 pub mod wallet;
 
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{middleware, Router};
 use utoipa::OpenApi as _;
 use utoipa_swagger_ui::SwaggerUi;
@@ -91,11 +91,23 @@ fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool) -> R
 
     if state.wallet_db.is_some() {
         router = router
+            .route(
+                "/v1/wallet/keypairs",
+                get(wallet::get_keypairs).post(wallet::post_import_keypairs),
+            )
             .route("/v1/wallet", get(wallet::get_wallet_info))
-            .route("/v1/wallet/keypairs", get(wallet::get_keypairs))
+            .route("/v1/wallet/addresses", post(wallet::post_new_address))
+            .route("/v1/wallet/passphrase", put(wallet::put_passphrase))
+            .route(
+                "/v1/wallet/running-total:refresh",
+                post(wallet::post_running_total_refresh),
+            )
             .route("/v1/transactions/outgoing", get(transactions::get_outgoing_txs));
         mounted.push("v1/wallet".to_owned());
         mounted.push("v1/wallet/keypairs".to_owned());
+        mounted.push("v1/wallet/addresses".to_owned());
+        mounted.push("v1/wallet/passphrase".to_owned());
+        mounted.push("v1/wallet/running-total:refresh".to_owned());
         mounted.push("v1/transactions/outgoing".to_owned());
     }
 
@@ -129,10 +141,11 @@ mod tests {
     use fleet_core::tracked_utxo::TrackedUtxoSet;
     use fleet_core::utils::{ApiKeys, RoutesPoWInfo};
     use fleet_core::Node;
-    use fleet_wallet::WalletDb;
+    use fleet_wallet::{AddressStore, WalletDb};
     use http_body_util::BodyExt;
     use serde_json::Value;
     use tower::ServiceExt;
+    use tw_chain::crypto::sign_ed25519 as sign;
     use tw_chain::primitives::asset::TokenAmount;
     use tw_chain::primitives::transaction::{GenesisTxHashSpec, Transaction};
 
@@ -733,6 +746,250 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn post_new_address_returns_201_with_a_new_address() {
+        let app = miner_router(miner_solo_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/wallet/addresses")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = body_json(response).await;
+        let address = body["address"].as_str().expect("address is a string");
+        assert!(!address.is_empty());
+    }
+
+    #[tokio::test]
+    async fn put_passphrase_returns_400_problem_json_for_blank_new_passphrase() {
+        let app = miner_router(miner_solo_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/v1/wallet/passphrase")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"old_passphrase":"","new_passphrase":""}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 400);
+        assert!(problem["detail"].is_string());
+    }
+
+    #[tokio::test]
+    async fn put_passphrase_returns_204_when_old_passphrase_matches() {
+        let app = miner_router(miner_solo_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/v1/wallet/passphrase")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"old_passphrase":"","new_passphrase":"hunter2"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn post_import_keypairs_returns_201_with_empty_imported_for_empty_body() {
+        let app = miner_router(miner_solo_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/wallet/keypairs")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"addresses":{}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = body_json(response).await;
+        assert_eq!(body["imported"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn post_import_keypairs_saves_nothing_when_a_later_entry_has_bad_hex() {
+        // `state` shares its `WalletDb` (an `Arc<Mutex<..>>` under the hood) across
+        // clones, so the router built for the follow-up GET below sees whatever the
+        // failing POST actually persisted.
+        let state = miner_solo_state().await;
+
+        let (public_key, secret_key) = sign::gen_keypair();
+        let good_store = AddressStore {
+            public_key,
+            secret_key,
+            address_version: None,
+        };
+        let good_hex: fleet_wallet::AddressStoreHex = good_store.into();
+
+        // Key names are chosen so "aGoodAddr" sorts before "zBadAddr" in the
+        // request body's BTreeMap: under the old interleaved
+        // convert-then-save-per-entry loop, the good address would already have
+        // been saved by the time the bad hex was hit and the handler bailed with
+        // 400.
+        let body = serde_json::json!({
+            "addresses": {
+                "aGoodAddr": good_hex,
+                "zBadAddr": {
+                    "public_key": "not-hex",
+                    "secret_key": "not-hex",
+                    "address_version": null,
+                },
+            },
+        });
+
+        let app = miner_router(state.clone());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/wallet/keypairs")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+
+        // No partial write: even though "aGoodAddr" sorts first and is valid, the
+        // whole import must have been rejected before anything was saved.
+        let app = miner_router(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/wallet/keypairs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["addresses"], serde_json::json!({}));
+    }
+
+    #[tokio::test]
+    async fn post_running_total_refresh_returns_400_when_no_addresses_given() {
+        let app = user_router(user_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/wallet/running-total:refresh")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"all":false,"addresses":[]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 400);
+    }
+
+    #[tokio::test]
+    async fn post_running_total_refresh_returns_400_when_all_true_and_wallet_is_empty() {
+        let app = user_router(user_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/wallet/running-total:refresh")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"all":true,"addresses":[]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 400);
+    }
+
+    #[tokio::test]
+    async fn post_running_total_refresh_returns_202_with_explicit_addresses() {
+        let app = user_router(user_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/wallet/running-total:refresh")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"all":false,"addresses":["abc"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
+    async fn post_running_total_refresh_routes_through_the_embedded_user_node_for_a_paired_miner() {
+        // A miner paired with an embedded user node must refresh via that user node
+        // (aux_node) exactly as legacy `miner_node_with_user_routes` did, not via the
+        // miner node. The event injection succeeds either way on a test node, so this
+        // guards that the aux-node path is wired and doesn't error.
+        let app = miner_router(miner_with_user_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/wallet/running-total:refresh")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"all":false,"addresses":["abc"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
     async fn get_outgoing_txs_returns_200_empty_array_for_empty_wallet() {
         let app = miner_router(miner_solo_state().await);
 
@@ -779,6 +1036,10 @@ mod tests {
             for (method, uri) in [
                 ("GET", "/v1/wallet"),
                 ("GET", "/v1/wallet/keypairs"),
+                ("POST", "/v1/wallet/keypairs"),
+                ("POST", "/v1/wallet/addresses"),
+                ("PUT", "/v1/wallet/passphrase"),
+                ("POST", "/v1/wallet/running-total:refresh"),
                 ("GET", "/v1/transactions/outgoing"),
                 ("GET", "/v1/mining/current-block"),
             ] {

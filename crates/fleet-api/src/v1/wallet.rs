@@ -12,7 +12,7 @@ use axum::extract::{Query, State};
 use axum::Json;
 use fleet_core::constants::D_DISPLAY_PLACES;
 use fleet_core::interfaces::{AddressesWithOutPoints, OutPointData};
-use fleet_wallet::AddressStoreHex;
+use fleet_wallet::{AddressStore, AddressStoreHex};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -162,4 +162,216 @@ pub async fn get_keypairs(State(state): State<ApiState>) -> Result<Json<Keypairs
 
     let addresses = serde_json::to_value(&addresses).map_err(|err| ApiProblem::internal(err.to_string()))?;
     Ok(Json(KeypairsResponse { addresses }))
+}
+
+/// A newly generated payment address.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct NewAddressResponse {
+    /// The newly generated payment address.
+    pub address: String,
+}
+
+/// Generate and return a new payment address for this node's wallet.
+#[utoipa::path(
+    post,
+    path = "/v1/wallet/addresses",
+    tag = "wallet",
+    responses(
+        (status = 201, description = "A newly generated payment address", body = NewAddressResponse),
+        (status = 500, description = "This node does not expose a wallet", body = ApiProblem, content_type = "application/problem+json"),
+    ),
+    security(("api_key" = [])),
+)]
+pub async fn post_new_address(
+    State(state): State<ApiState>,
+) -> Result<(axum::http::StatusCode, Json<NewAddressResponse>), ApiProblem> {
+    let mut wallet_db = state
+        .wallet_db
+        .clone()
+        .ok_or_else(|| ApiProblem::internal("this node does not expose a wallet"))?;
+    let (address, _) = wallet_db.generate_payment_address();
+    Ok((axum::http::StatusCode::CREATED, Json(NewAddressResponse { address })))
+}
+
+/// Request body for `PUT /v1/wallet/passphrase`.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ChangePassphraseRequest {
+    /// The wallet's current passphrase.
+    pub old_passphrase: String,
+    /// The passphrase to change to.
+    pub new_passphrase: String,
+}
+
+/// Change this node's wallet passphrase.
+#[utoipa::path(
+    put,
+    path = "/v1/wallet/passphrase",
+    tag = "wallet",
+    request_body = ChangePassphraseRequest,
+    responses(
+        (status = 204, description = "Passphrase changed"),
+        (status = 400, description = "The new passphrase was blank", body = ApiProblem, content_type = "application/problem+json"),
+        (status = 500, description = "This node does not expose a wallet, or the passphrase change failed", body = ApiProblem, content_type = "application/problem+json"),
+    ),
+    security(("api_key" = [])),
+)]
+pub async fn put_passphrase(
+    State(state): State<ApiState>,
+    Json(body): Json<ChangePassphraseRequest>,
+) -> Result<axum::http::StatusCode, ApiProblem> {
+    let mut wallet_db = state
+        .wallet_db
+        .clone()
+        .ok_or_else(|| ApiProblem::internal("this node does not expose a wallet"))?;
+    if body.new_passphrase.is_empty() {
+        return Err(ApiProblem::bad_request("new passphrase must not be blank"));
+    }
+    wallet_db
+        .change_wallet_passphrase(body.old_passphrase, body.new_passphrase)
+        .await
+        .map_err(|err| ApiProblem::internal(err.to_string()))?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+/// Request body for `POST /v1/wallet/keypairs`.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ImportKeypairsRequest {
+    /// Hex-encoded key-pairs to import, keyed by payment address (mirrors the legacy
+    /// `Addresses` request body / `KeypairsResponse`).
+    #[schema(value_type = Object)]
+    pub addresses: BTreeMap<String, AddressStoreHex>,
+}
+
+/// The payment addresses imported by `POST /v1/wallet/keypairs`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ImportKeypairsResponse {
+    /// The payment addresses that were imported.
+    pub imported: Vec<String>,
+}
+
+/// Import key-pairs into this node's wallet, then request a running-total refresh from
+/// the UTXO set for the imported addresses.
+#[utoipa::path(
+    post,
+    path = "/v1/wallet/keypairs",
+    tag = "wallet",
+    request_body = ImportKeypairsRequest,
+    responses(
+        (status = 201, description = "The payment addresses that were imported", body = ImportKeypairsResponse),
+        (status = 400, description = "One of the key-pairs was not valid hex", body = ApiProblem, content_type = "application/problem+json"),
+        (status = 500, description = "This node does not expose a wallet, the key-pairs could not be saved, or the running-total refresh could not be requested", body = ApiProblem, content_type = "application/problem+json"),
+    ),
+    security(("api_key" = [])),
+)]
+pub async fn post_import_keypairs(
+    State(state): State<ApiState>,
+    Json(body): Json<ImportKeypairsRequest>,
+) -> Result<(axum::http::StatusCode, Json<ImportKeypairsResponse>), ApiProblem> {
+    let wallet_db = state
+        .wallet_db
+        .clone()
+        .ok_or_else(|| ApiProblem::internal("this node does not expose a wallet"))?;
+
+    let imported: Vec<String> = body.addresses.keys().cloned().collect();
+
+    // Convert every entry before saving any of them, so a bad hex further down the
+    // request never leaves earlier entries persisted behind a 400 response.
+    let mut converted: Vec<(String, AddressStore)> = Vec::with_capacity(body.addresses.len());
+    for (addr, hex) in body.addresses {
+        let store =
+            AddressStore::try_from_hex_store(hex).map_err(|err| ApiProblem::bad_request(err.to_string()))?;
+        converted.push((addr, store));
+    }
+
+    for (addr, store) in converted {
+        wallet_db
+            .save_address_to_wallet(addr, store)
+            .map_err(|err| ApiProblem::internal(err.to_string()))?;
+    }
+
+    inject_running_total_refresh(wallet_node(&state), imported.clone())?;
+
+    Ok((axum::http::StatusCode::CREATED, Json(ImportKeypairsResponse { imported })))
+}
+
+/// Request body for `POST /v1/wallet/running-total:refresh`.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RunningTotalRefreshRequest {
+    /// Refresh every known address (ignores `addresses` when true).
+    #[serde(default)]
+    pub all: bool,
+    /// The specific addresses to refresh when `all` is false.
+    #[serde(default)]
+    pub addresses: Vec<String>,
+}
+
+/// Pick the node that owns the wallet for running-total refreshes: a miner paired with
+/// an embedded user node routes these through that user node (`aux_node`), exactly as the
+/// legacy `miner_node_with_user_routes` did; a solo miner or a standalone user node has no
+/// `aux_node`, so it uses the node itself.
+fn wallet_node(state: &ApiState) -> &fleet_core::Node {
+    state.aux_node.as_ref().unwrap_or(&state.node)
+}
+
+/// Inject a "refresh running total from the UTXO set" event into the given node, branching
+/// on node type exactly as the legacy import/update-running-total handlers did.
+///
+/// `inject_next_event` is generic (`data: impl Serialize`), so each arm passes its
+/// concrete request type directly — do NOT box into a trait object.
+fn inject_running_total_refresh(node: &fleet_core::Node, addresses: Vec<String>) -> Result<(), ApiProblem> {
+    use fleet_core::interfaces::{MineApiRequest, MineRequest, NodeType, UserApiRequest, UserRequest, UtxoFetchType};
+    let from = node.local_address();
+    match node.get_node_type() {
+        NodeType::Miner => node
+            .inject_next_event(
+                from,
+                MineRequest::MinerApi(MineApiRequest::RequestUTXOSet(UtxoFetchType::AnyOf(addresses))),
+            )
+            .map_err(|err| ApiProblem::internal(err.to_string())),
+        NodeType::User => node
+            .inject_next_event(
+                from,
+                UserRequest::UserApi(UserApiRequest::UpdateWalletFromUtxoSet {
+                    address_list: UtxoFetchType::AnyOf(addresses),
+                }),
+            )
+            .map_err(|err| ApiProblem::internal(err.to_string())),
+        _ => Err(ApiProblem::internal("this node cannot refresh a running total")),
+    }
+}
+
+/// Request a running-total refresh from the UTXO set for this node's wallet.
+#[utoipa::path(
+    post,
+    path = "/v1/wallet/running-total:refresh",
+    tag = "wallet",
+    request_body = RunningTotalRefreshRequest,
+    responses(
+        (status = 202, description = "The running-total refresh was requested"),
+        (status = 400, description = "No addresses to refresh were resolved", body = ApiProblem, content_type = "application/problem+json"),
+        (status = 500, description = "This node does not expose a wallet, or the running-total refresh could not be requested", body = ApiProblem, content_type = "application/problem+json"),
+    ),
+    security(("api_key" = [])),
+)]
+pub async fn post_running_total_refresh(
+    State(state): State<ApiState>,
+    Json(body): Json<RunningTotalRefreshRequest>,
+) -> Result<axum::http::StatusCode, ApiProblem> {
+    let wallet_db = state
+        .wallet_db
+        .clone()
+        .ok_or_else(|| ApiProblem::internal("this node does not expose a wallet"))?;
+
+    let list = if body.all {
+        wallet_db.get_known_addresses()
+    } else {
+        body.addresses
+    };
+    if list.is_empty() {
+        return Err(ApiProblem::bad_request("no addresses to refresh"));
+    }
+
+    inject_running_total_refresh(wallet_node(&state), list)?;
+
+    Ok(axum::http::StatusCode::ACCEPTED)
 }
