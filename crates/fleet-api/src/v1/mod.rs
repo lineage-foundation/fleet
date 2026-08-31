@@ -429,6 +429,36 @@ mod tests {
         ApiState::user(node, db, tx, api_keys(vec![]), empty_routes_pow(), empty_wallet_db())
     }
 
+    /// A user `ApiState` like `user_state()`, but with `passphrase` set on the wallet
+    /// (rather than the empty-passphrase default `empty_wallet_db()` uses) — lets tests
+    /// exercise the wrong-passphrase `401` branch of `POST /v1/payments`, which
+    /// `test_passphrase` always accepts against an empty-passphrase wallet.
+    async fn user_state_with_passphrase(passphrase: &str) -> ApiState {
+        let node = test_node(NodeType::User).await;
+        let db = Arc::new(Mutex::new(new_db(
+            DbMode::InMemory,
+            &fleet_storage::DB_SPEC,
+            None,
+            None,
+        )));
+        let ThreadedCallChannel { tx, mut rx } = ThreadedCallChannel::<dyn UserApi>::default();
+
+        tokio::spawn(async move {
+            let mut user = TestUser;
+            while let Some(f) = rx.recv().await {
+                f(&mut user);
+            }
+        });
+
+        let mut wallet_db = empty_wallet_db();
+        wallet_db
+            .change_wallet_passphrase(String::new(), passphrase.to_owned())
+            .await
+            .expect("set wallet passphrase");
+
+        ApiState::user(node, db, tx, api_keys(vec![]), empty_routes_pow(), wallet_db)
+    }
+
     /// A miner-with-embedded-user `ApiState` (mirrors `miner_node_with_user_routes`):
     /// same wallet DB / current-block capabilities as `miner_solo_state`, plus an
     /// aux user node and a `TestUser` threaded-call sender. The embedded user node
@@ -1769,6 +1799,38 @@ mod tests {
         assert_eq!(body["to_address"], "pay_addr");
         assert_eq!(body["amount"], serde_json::json!({"kind": "token", "amount": 5}));
         assert_eq!(body["tx_hash"], "test_payment_tx_hash");
+    }
+
+    #[tokio::test]
+    async fn post_payment_address_returns_401_problem_json_for_wrong_passphrase() {
+        let app = user_router(user_state_with_passphrase("secret").await);
+
+        let body = serde_json::json!({
+            "kind": "address",
+            "address": "pay_addr",
+            "amount": 5,
+            "passphrase": "wrong",
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/payments")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 401);
     }
 
     #[tokio::test]
