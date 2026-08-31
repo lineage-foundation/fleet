@@ -156,12 +156,14 @@ Routes ported so far:
 | `POST /v1/transactions:serialize` | user |
 | `POST /v1/transactions:deserialize` | user |
 | `GET /v1/mining/current-block` | miner |
+| `POST /v1/payments` | user, miner |
+| `POST /v1/donation-requests` | user |
 
 `GET /v1/blocks` and the `.../query` POST routes take repeated query params or a JSON body respectively, for looking up more than one key at a time. `GET /v1/wallet` takes optional `page` and `spent` query params, matching the paging/spent-filter behaviour of the old wallet-info endpoint.
 
 Wallet routes are mounted on any node carrying a wallet DB (user, and a miner whether solo or paired with an embedded user node); `mining/current-block` is mounted on any node that mines.
 
-`POST /v1/payments` and `POST /v1/donation-requests` are the next phase; they aren't in this API yet.
+That's the full write surface ported over from the old API; what's left is hardening — per-node OpenAPI subsets and a final docs pass.
 
 Routes that have a configured key require an `x-api-key` header; this is documented as an OpenAPI security scheme (`api_key`) in the spec. `pre_launch` has no HTTP API surface.
 
