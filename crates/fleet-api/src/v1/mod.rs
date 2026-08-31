@@ -21,35 +21,35 @@ use crate::state::ApiState;
 
 /// Router for a mempool node: `/v1/debug` + supply/balances/transaction-status.
 pub fn mempool_router(state: ApiState) -> Router {
-    build_router(state, false, true)
+    build_router(state, false, true, false)
 }
 
 /// Router for a storage node: `/v1/debug` + `/v1/blocks/latest` (and other block /
 /// blockchain-entry resources).
 pub fn storage_router(state: ApiState) -> Router {
-    build_router(state, true, false)
+    build_router(state, true, false, false)
 }
 
 /// Router for a miner node: `/v1/debug` + wallet/keypairs/outgoing-txs (when it carries
 /// a wallet) + current mining block (when it mines).
 pub fn miner_router(state: ApiState) -> Router {
-    build_router(state, false, false)
+    build_router(state, false, false, false)
 }
 
 /// Router for a user node: `/v1/debug` + wallet/keypairs/outgoing-txs (it always
-/// carries a wallet).
+/// carries a wallet) + stateless transaction serialize/deserialize.
 pub fn user_router(state: ApiState) -> Router {
-    build_router(state, false, false)
+    build_router(state, false, false, true)
 }
 
 /// Router for a pre-launch node: `/v1/debug` (PR1 slice).
 pub fn pre_launch_router(state: ApiState) -> Router {
-    build_router(state, false, false)
+    build_router(state, false, false, false)
 }
 
 /// Shared router assembly: mounts the resources for this node, Swagger UI +
 /// `/v1/openapi.json`, and the api-key layer.
-fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool) -> Router {
+fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool, is_user: bool) -> Router {
     let mut router = Router::new().route("/v1/debug", get(debug::get_debug));
     let mut mounted = vec!["v1/debug".to_owned()];
 
@@ -117,6 +117,20 @@ fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool) -> R
     if state.current_block.is_some() {
         router = router.route("/v1/mining/current-block", get(mining::get_current_block));
         mounted.push("v1/mining/current-block".to_owned());
+    }
+
+    if is_user {
+        router = router
+            .route(
+                "/v1/transactions:serialize",
+                post(transactions::post_serialize_transactions),
+            )
+            .route(
+                "/v1/transactions:deserialize",
+                post(transactions::post_deserialize_transactions),
+            );
+        mounted.push("v1/transactions:serialize".to_owned());
+        mounted.push("v1/transactions:deserialize".to_owned());
     }
     state.mounted_routes = mounted;
 
@@ -753,6 +767,127 @@ mod tests {
         assert!(problem["detail"].is_string());
     }
 
+    /// A minimal, valid `CreateTransaction` JSON body: no inputs, a single token
+    /// output.
+    fn minimal_create_transaction_json() -> Value {
+        serde_json::json!({
+            "inputs": [],
+            "outputs": [{
+                "value": {"Token": 42},
+                "locktime": 0,
+                "script_public_key": "some_address",
+            }],
+            "version": 1,
+            "fees": null,
+            "druid_info": null,
+        })
+    }
+
+    #[tokio::test]
+    async fn post_serialize_transactions_returns_200_with_hex_and_hash() {
+        let app = user_router(user_state().await);
+
+        let body = serde_json::json!({ "transactions": [minimal_create_transaction_json()] });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/transactions:serialize")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        let serialized = &body["transactions"][0];
+        assert!(
+            serialized["txn_hex"].as_str().is_some_and(|s| !s.is_empty()),
+            "txn_hex should be non-empty hex: {body:?}"
+        );
+        assert!(
+            serialized["txn_hash_hex"].as_str().is_some_and(|s| !s.is_empty()),
+            "txn_hash_hex should be non-empty: {body:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_serialize_then_deserialize_transactions_round_trips() {
+        let app = user_router(user_state().await);
+
+        let create_body = serde_json::json!({ "transactions": [minimal_create_transaction_json()] });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/transactions:serialize")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(create_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let serialize_body = body_json(response).await;
+        let txn_hex = serialize_body["transactions"][0]["txn_hex"]
+            .as_str()
+            .expect("txn_hex is a string")
+            .to_owned();
+
+        let deserialize_body = serde_json::json!({ "transactions": [txn_hex] });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/transactions:deserialize")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(deserialize_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        let round_tripped = &body["transactions"][0];
+        assert_eq!(round_tripped["version"], 1);
+        assert_eq!(round_tripped["outputs"][0]["value"], serde_json::json!({"Token": 42}));
+    }
+
+    #[tokio::test]
+    async fn post_deserialize_transactions_returns_400_problem_json_for_bad_hex() {
+        let app = user_router(user_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/transactions:deserialize")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"transactions":["not-hex"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 400);
+        assert!(problem["detail"].is_string());
+    }
+
     #[tokio::test]
     async fn get_wallet_info_returns_200_with_zeroed_totals_for_empty_wallet() {
         let app = miner_router(miner_solo_state().await);
@@ -1142,6 +1277,39 @@ mod tests {
                 ("GET", "/v1/transactions/status"),
                 ("POST", "/v1/transactions/status:query"),
                 ("POST", "/v1/transactions"),
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(response.status(), StatusCode::NOT_FOUND, "unexpected mount: {method} {uri}");
+                assert_ne!(
+                    response.headers().get(header::CONTENT_TYPE),
+                    Some(&header::HeaderValue::from_static("application/problem+json")),
+                    "route should be unmounted (axum default 404), not our typed 404: {method} {uri}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn user_only_serialize_deserialize_are_not_mounted_on_non_user_routers() {
+        for app in [
+            mempool_router(mempool_state(TestMempool::default()).await),
+            storage_router(empty_storage_state().await),
+            miner_router(miner_solo_state().await),
+        ] {
+            for (method, uri) in [
+                ("POST", "/v1/transactions:serialize"),
+                ("POST", "/v1/transactions:deserialize"),
             ] {
                 let response = app
                     .clone()

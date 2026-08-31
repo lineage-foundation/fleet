@@ -1,12 +1,15 @@
 //! `GET /v1/transactions/status`, `POST /v1/transactions/status:query` — mempool status
 //! for one or more transactions; `GET /v1/transactions/outgoing` — this node's
 //! constructed-and-sent transactions; `POST /v1/transactions` — construct and submit
-//! transactions to the mempool.
+//! transactions to the mempool; `POST /v1/transactions:serialize` and `POST
+//! /v1/transactions:deserialize` — stateless hex (de)serialization, user-node only.
 //!
 //! Reuses the legacy `post_transaction_status` handler:
 //! `MempoolApi::get_transaction_status(hashes)`, via a threaded call into the mempool
-//! node; the legacy `get_outgoing_txs` handler: `WalletDb::get_outgoing_txs()`; and the
-//! legacy `post_create_transactions` handler: `MempoolApi::receive_transactions(..)`.
+//! node; the legacy `get_outgoing_txs` handler: `WalletDb::get_outgoing_txs()`; the
+//! legacy `post_create_transactions` handler: `MempoolApi::receive_transactions(..)`;
+//! and the legacy `post_serialize_transactions`/`post_deserialize_transactions`
+//! handlers, which do no I/O at all.
 
 use std::collections::BTreeMap;
 
@@ -15,13 +18,15 @@ use axum::http::StatusCode;
 use axum::Json;
 use fleet_core::interfaces::{TxStatus, TxStatusType};
 use fleet_core::threaded_call::make_threaded_call;
+use fleet_core::utils::StringError;
 use fleet_wallet::WalletDbError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tw_chain::primitives::transaction::Transaction;
+use tw_chain::utils::transaction_utils::construct_tx_hash;
 use utoipa::ToSchema;
 
-use super::tx_convert::{construct_ctx_map, to_transaction, CreateTransaction};
+use super::tx_convert::{self, construct_ctx_map, to_transaction, CreateTransaction, JsonSerializedTransaction};
 use crate::error::ApiProblem;
 use crate::state::ApiState;
 
@@ -230,4 +235,88 @@ pub async fn post_create_transactions(
     let transactions = serde_json::to_value(&ctx_map).map_err(|err| ApiProblem::internal(err.to_string()))?;
 
     Ok((StatusCode::CREATED, Json(CreateTransactionsResponse { transactions })))
+}
+
+/// Request body for `POST /v1/transactions:serialize`.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SerializeTransactionsRequest {
+    /// The transactions to serialize.
+    pub transactions: Vec<CreateTransaction>,
+}
+
+/// Response body for `POST /v1/transactions:serialize`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SerializeTransactionsResponse {
+    pub transactions: Vec<JsonSerializedTransaction>,
+}
+
+/// Serialize one or more transactions to hex-encoded bytes, without submitting them to
+/// the mempool. Stateless; not tied to any node's mempool or wallet.
+#[utoipa::path(
+    post,
+    path = "/v1/transactions:serialize",
+    tag = "transactions",
+    request_body = SerializeTransactionsRequest,
+    responses(
+        (status = 200, description = "The serialized transaction(s)", body = SerializeTransactionsResponse),
+        (status = 400, description = "One or more transactions were malformed", body = ApiProblem, content_type = "application/problem+json"),
+    ),
+)]
+pub async fn post_serialize_transactions(
+    Json(body): Json<SerializeTransactionsRequest>,
+) -> Result<Json<SerializeTransactionsResponse>, ApiProblem> {
+    let transactions = body
+        .transactions
+        .into_iter()
+        .map(to_transaction)
+        .map(|res| {
+            let tx = res?;
+            let bytes = bincode::serialize(&tx).map_err(|err| StringError(err.to_string()))?;
+            Ok(JsonSerializedTransaction {
+                txn_hash_hex: construct_tx_hash(&tx),
+                txn_hex: hex::encode(bytes),
+            })
+        })
+        .collect::<Result<Vec<_>, StringError>>()
+        .map_err(|err| ApiProblem::bad_request(err.0))?;
+
+    Ok(Json(SerializeTransactionsResponse { transactions }))
+}
+
+/// Request body for `POST /v1/transactions:deserialize`.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct DeserializeTransactionsRequest {
+    /// Hex-encoded serialized transactions.
+    pub transactions: Vec<String>,
+}
+
+/// Response body for `POST /v1/transactions:deserialize`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DeserializeTransactionsResponse {
+    pub transactions: Vec<CreateTransaction>,
+}
+
+/// Deserialize one or more hex-encoded transactions, without submitting them to the
+/// mempool. Stateless; not tied to any node's mempool or wallet.
+#[utoipa::path(
+    post,
+    path = "/v1/transactions:deserialize",
+    tag = "transactions",
+    request_body = DeserializeTransactionsRequest,
+    responses(
+        (status = 200, description = "The deserialized transaction(s)", body = DeserializeTransactionsResponse),
+        (status = 400, description = "One or more hex strings were malformed", body = ApiProblem, content_type = "application/problem+json"),
+    ),
+)]
+pub async fn post_deserialize_transactions(
+    Json(body): Json<DeserializeTransactionsRequest>,
+) -> Result<Json<DeserializeTransactionsResponse>, ApiProblem> {
+    let transactions = body
+        .transactions
+        .into_iter()
+        .map(tx_convert::from_hex_transaction)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| ApiProblem::bad_request(err.0))?;
+
+    Ok(Json(DeserializeTransactionsResponse { transactions }))
 }
