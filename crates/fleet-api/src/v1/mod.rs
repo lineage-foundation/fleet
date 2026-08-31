@@ -5,6 +5,7 @@ pub mod balances;
 pub mod blockchain;
 pub mod blocks;
 pub mod debug;
+pub mod items;
 pub mod mining;
 pub mod supply;
 pub mod transactions;
@@ -133,6 +134,11 @@ fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool, is_u
         mounted.push("v1/transactions:serialize".to_owned());
         mounted.push("v1/transactions:deserialize".to_owned());
     }
+
+    if state.mempool_calls_tx.is_some() || state.user_calls_tx.is_some() {
+        router = router.route("/v1/items", post(items::post_create_item));
+        mounted.push("v1/items".to_owned());
+    }
     state.mounted_routes = mounted;
 
     router
@@ -244,7 +250,16 @@ mod tests {
             _genesis_hash_spec: GenesisTxHashSpec,
             _metadata: Option<String>,
         ) -> Result<(Transaction, String), MempoolError> {
-            Err(MempoolError::ConfigError("not implemented in test mock"))
+            Ok((
+                Transaction {
+                    inputs: vec![],
+                    outputs: vec![],
+                    version: 1,
+                    fees: vec![],
+                    druid_info: None,
+                },
+                "test_item_tx_hash".to_owned(),
+            ))
         }
     }
 
@@ -370,9 +385,9 @@ mod tests {
 
     /// A miner-with-embedded-user `ApiState` (mirrors `miner_node_with_user_routes`):
     /// same wallet DB / current-block capabilities as `miner_solo_state`, plus an
-    /// aux user node and a `TestUser` threaded-call sender. Used only to confirm
-    /// that the embedded user node doesn't change `miner_router`'s mounted routes
-    /// (mounting is keyed off `wallet_db`/`current_block`, not `aux_node`).
+    /// aux user node and a `TestUser` threaded-call sender. The embedded user node
+    /// (its `user_calls_tx`) adds `/v1/items` over a solo miner; every other route is
+    /// keyed off `wallet_db`/`current_block`, so the two share the rest of their set.
     async fn miner_with_user_state() -> ApiState {
         let node = test_node(NodeType::Miner).await;
         let aux_node = test_node(NodeType::User).await;
@@ -1413,7 +1428,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn miner_with_user_router_mounts_the_same_routes_as_miner_solo() {
+    async fn miner_with_user_router_mounts_the_same_routes_as_miner_solo_plus_items() {
         async fn reported_routes(app: Router) -> Vec<String> {
             let response = app
                 .oneshot(Request::builder().uri("/v1/debug").body(Body::empty()).unwrap())
@@ -1427,13 +1442,18 @@ mod tests {
             data.node_api
         }
 
-        let solo = reported_routes(miner_router(miner_solo_state().await)).await;
+        let mut solo = reported_routes(miner_router(miner_solo_state().await)).await;
         let with_user = reported_routes(miner_router(miner_with_user_state().await)).await;
 
+        // Every route mounting is keyed off wallet_db/current_block, except /v1/items,
+        // which is keyed off mempool_calls_tx/user_calls_tx: a miner paired with an
+        // embedded user node (user_calls_tx) can create items through it, a solo miner
+        // (neither sender) cannot.
+        solo.push("v1/items".to_owned());
         assert_eq!(
             solo, with_user,
-            "an embedded user node (aux_node/user_calls_tx) shouldn't change which routes \
-             miner_router mounts — mounting is keyed off wallet_db/current_block"
+            "an embedded user node (aux_node/user_calls_tx) should add exactly /v1/items \
+             to the routes miner_router mounts"
         );
     }
 
@@ -1445,9 +1465,10 @@ mod tests {
     /// `storage`, `mempool`, `miner`, `user`), unions the reported paths, and
     /// asserts that's exactly the path set `ApiDoc` documents: nothing documented
     /// but unmounted, nothing mounted but undocumented. `miner_router` is exercised
-    /// via a solo-miner state; `miner_with_user_router_mounts_the_same_routes_as_miner_solo`
-    /// below confirms the with-embedded-user variant doesn't add anything beyond
-    /// that, so it isn't unioned in separately here.
+    /// via a solo-miner state; `miner_with_user_router_mounts_the_same_routes_as_miner_solo_plus_items`
+    /// below confirms the with-embedded-user variant only adds `/v1/items` beyond
+    /// that — already covered here via the mempool/user unions — so it isn't unioned
+    /// in separately here.
     ///
     /// This isn't a raw reflection of axum's internal route table (axum doesn't
     /// expose one), so it still relies on `node_api` staying in sync with the
@@ -1504,5 +1525,156 @@ mod tests {
             documented, mounted,
             "ApiDoc must list exactly the union of paths mounted across all node routers"
         );
+    }
+
+    #[tokio::test]
+    async fn post_create_item_returns_201_with_typed_asset_on_mempool_node() {
+        let app = mempool_router(mempool_state(TestMempool::default()).await);
+
+        let body = serde_json::json!({
+            "item_amount": 5,
+            "genesis_hash_spec": "Create",
+            "metadata": null,
+            "script_public_key": "some_address",
+            "public_key": "some_public_key",
+            "signature": "some_signature",
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/items")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = body_json(response).await;
+        assert_eq!(
+            body["asset"],
+            serde_json::json!({"kind": "item", "amount": 5, "genesis_hash": "test_item_tx_hash", "metadata": null})
+        );
+        assert_eq!(body["to_address"], "some_address");
+        assert!(body["tx_hash"].as_str().is_some_and(|s| !s.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn post_create_item_returns_400_problem_json_when_signed_fields_are_missing_on_mempool_node() {
+        let app = mempool_router(mempool_state(TestMempool::default()).await);
+
+        let body = serde_json::json!({
+            "item_amount": 5,
+            "genesis_hash_spec": "Create",
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/items")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 400);
+        assert!(problem["detail"].is_string());
+    }
+
+    #[tokio::test]
+    async fn post_create_item_returns_202_on_user_node() {
+        let app = user_router(user_state().await);
+
+        let body = serde_json::json!({
+            "item_amount": 7,
+            "genesis_hash_spec": "Default",
+            "metadata": null,
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/items")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = body_json(response).await;
+        assert_eq!(body["item_amount"], 7);
+    }
+
+    #[tokio::test]
+    async fn post_create_item_returns_202_on_miner_with_embedded_user_node() {
+        let app = miner_router(miner_with_user_state().await);
+
+        let body = serde_json::json!({
+            "item_amount": 3,
+            "genesis_hash_spec": "Default",
+            "metadata": null,
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/items")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = body_json(response).await;
+        assert_eq!(body["item_amount"], 3);
+    }
+
+    #[tokio::test]
+    async fn post_create_item_route_is_not_mounted_where_neither_mempool_nor_user_apply() {
+        for app in [
+            storage_router(empty_storage_state().await),
+            pre_launch_router(ApiState::pre_launch(
+                test_node(NodeType::PreLaunch).await,
+                api_keys(vec![]),
+                empty_routes_pow(),
+            )),
+            miner_router(miner_solo_state().await),
+        ] {
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/items")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert_ne!(
+                response.headers().get(header::CONTENT_TYPE),
+                Some(&header::HeaderValue::from_static("application/problem+json")),
+                "route should be unmounted (axum default 404), not our typed 404"
+            );
+        }
     }
 }
