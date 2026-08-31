@@ -48,9 +48,9 @@ pub struct WalletInfoResponse {
 /// Query parameters for `GET /v1/wallet`.
 ///
 /// The legacy handler overloaded a single `extra: Option<String>` request param to mean
-/// either "spent" or a page number; this splits that into two typed params. `spent`
-/// takes precedence over `page` when both are set, matching the legacy handler's
-/// `Some("spent")` branch taking precedence over falling through to a numeric parse.
+/// either "spent" or a page number; this splits that into two typed params. With separate
+/// params both can be set at once, so we deliberately let `spent` take precedence over
+/// `page` (legacy never had to choose, since `extra` carried only one value).
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct WalletInfoQuery {
     /// Which page of `transaction_pages` to return the outpoints from; defaults to the

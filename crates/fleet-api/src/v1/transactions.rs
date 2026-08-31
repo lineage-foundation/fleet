@@ -130,9 +130,9 @@ pub async fn query_transaction_status(
 /// This node's outgoing (constructed-and-sent) transactions, keyed by hash.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct OutgoingTxsResponse {
-    /// `(hash, transaction)` pairs (`tw_chain::primitives::transaction::Transaction`),
+    /// `[hash, transaction]` pairs (`tw_chain::primitives::transaction::Transaction`),
     /// passed through as JSON unchanged, mirroring the legacy embed-as-JSON behaviour.
-    #[schema(value_type = Object)]
+    #[schema(value_type = Vec<Object>)]
     pub transactions: Value,
 }
 
