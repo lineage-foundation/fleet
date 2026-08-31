@@ -946,10 +946,12 @@ version = "1.1.2"
 dependencies = [
  "axum",
  "axum-server",
+ "bincode",
  "fleet-core",
  "fleet-storage",
  "fleet-user",
  "fleet-wallet",
+ "hex",
  "http-body-util",
  "serde",
  "serde_json",

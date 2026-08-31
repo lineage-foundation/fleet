@@ -26,10 +26,17 @@ use crate::v1::mining::{__path_get_current_block, get_current_block, CurrentBloc
 use crate::v1::supply::{__path_get_supply, get_supply, SupplyResponse};
 #[allow(unused_imports)]
 use crate::v1::transactions::{
-    __path_get_outgoing_txs, __path_get_transaction_status, __path_query_transaction_status, get_outgoing_txs,
-    get_transaction_status, query_transaction_status, HashesQuery, OutgoingTxsResponse, TxStatusResponse,
-    TxStatusTypeResponse,
+    __path_get_outgoing_txs, __path_get_transaction_status, __path_post_create_transactions,
+    __path_post_deserialize_transactions, __path_post_serialize_transactions, __path_query_transaction_status,
+    get_outgoing_txs, get_transaction_status, post_create_transactions, post_deserialize_transactions,
+    post_serialize_transactions, query_transaction_status, CreateTransactionsRequest, CreateTransactionsResponse,
+    DeserializeTransactionsRequest, DeserializeTransactionsResponse, HashesQuery, OutgoingTxsResponse,
+    SerializeTransactionsRequest, SerializeTransactionsResponse, TxStatusResponse, TxStatusTypeResponse,
 };
+#[allow(unused_imports)]
+use crate::v1::asset::{ApiAsset, TxOutputSummary};
+#[allow(unused_imports)]
+use crate::v1::tx_convert::JsonSerializedTransaction;
 #[allow(unused_imports)]
 use crate::v1::wallet::{
     __path_get_keypairs, __path_get_wallet_info, __path_post_import_keypairs, __path_post_new_address,
@@ -60,6 +67,9 @@ use crate::v1::wallet::{
         query_balances,
         get_transaction_status,
         query_transaction_status,
+        post_create_transactions,
+        post_serialize_transactions,
+        post_deserialize_transactions,
         get_outgoing_txs,
         get_wallet_info,
         get_keypairs,
@@ -82,6 +92,15 @@ use crate::v1::wallet::{
         TxStatusResponse,
         TxStatusTypeResponse,
         HashesQuery,
+        CreateTransactionsRequest,
+        CreateTransactionsResponse,
+        ApiAsset,
+        TxOutputSummary,
+        SerializeTransactionsRequest,
+        SerializeTransactionsResponse,
+        JsonSerializedTransaction,
+        DeserializeTransactionsRequest,
+        DeserializeTransactionsResponse,
         OutgoingTxsResponse,
         WalletInfoResponse,
         WalletInfoQuery,
@@ -143,9 +162,12 @@ mod tests {
                 "/v1/debug",
                 "/v1/mining/current-block",
                 "/v1/supply",
+                "/v1/transactions",
                 "/v1/transactions/outgoing",
                 "/v1/transactions/status",
                 "/v1/transactions/status:query",
+                "/v1/transactions:deserialize",
+                "/v1/transactions:serialize",
                 "/v1/wallet",
                 "/v1/wallet/addresses",
                 "/v1/wallet/keypairs",
