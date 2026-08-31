@@ -91,15 +91,23 @@ fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool) -> R
 
     if state.wallet_db.is_some() {
         router = router
+            .route(
+                "/v1/wallet/keypairs",
+                get(wallet::get_keypairs).post(wallet::post_import_keypairs),
+            )
             .route("/v1/wallet", get(wallet::get_wallet_info))
-            .route("/v1/wallet/keypairs", get(wallet::get_keypairs))
             .route("/v1/wallet/addresses", post(wallet::post_new_address))
             .route("/v1/wallet/passphrase", put(wallet::put_passphrase))
+            .route(
+                "/v1/wallet/running-total:refresh",
+                post(wallet::post_running_total_refresh),
+            )
             .route("/v1/transactions/outgoing", get(transactions::get_outgoing_txs));
         mounted.push("v1/wallet".to_owned());
         mounted.push("v1/wallet/keypairs".to_owned());
         mounted.push("v1/wallet/addresses".to_owned());
         mounted.push("v1/wallet/passphrase".to_owned());
+        mounted.push("v1/wallet/running-total:refresh".to_owned());
         mounted.push("v1/transactions/outgoing".to_owned());
     }
 
@@ -804,6 +812,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn post_import_keypairs_returns_201_with_empty_imported_for_empty_body() {
+        let app = miner_router(miner_solo_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/wallet/keypairs")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"addresses":{}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = body_json(response).await;
+        assert_eq!(body["imported"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn post_running_total_refresh_returns_400_when_no_addresses_given() {
+        let app = user_router(user_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/wallet/running-total:refresh")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"all":false,"addresses":[]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 400);
+    }
+
+    #[tokio::test]
+    async fn post_running_total_refresh_returns_400_when_all_true_and_wallet_is_empty() {
+        let app = user_router(user_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/wallet/running-total:refresh")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"all":true,"addresses":[]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 400);
+    }
+
+    #[tokio::test]
+    async fn post_running_total_refresh_returns_202_with_explicit_addresses() {
+        let app = user_router(user_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/wallet/running-total:refresh")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"all":false,"addresses":["abc"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
     async fn get_outgoing_txs_returns_200_empty_array_for_empty_wallet() {
         let app = miner_router(miner_solo_state().await);
 
@@ -850,8 +944,10 @@ mod tests {
             for (method, uri) in [
                 ("GET", "/v1/wallet"),
                 ("GET", "/v1/wallet/keypairs"),
+                ("POST", "/v1/wallet/keypairs"),
                 ("POST", "/v1/wallet/addresses"),
                 ("PUT", "/v1/wallet/passphrase"),
+                ("POST", "/v1/wallet/running-total:refresh"),
                 ("GET", "/v1/transactions/outgoing"),
                 ("GET", "/v1/mining/current-block"),
             ] {
