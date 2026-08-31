@@ -16,11 +16,9 @@ pub mod wallet;
 
 use axum::routing::{get, post, put};
 use axum::{middleware, Router};
-use utoipa::OpenApi as _;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::api_key::require_api_key;
-use crate::openapi::ApiDoc;
 use crate::state::ApiState;
 
 /// Router for a mempool node: `/v1/debug` + supply/balances/transaction-status.
@@ -148,10 +146,11 @@ fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool, is_u
         router = router.route("/v1/payments", post(payments::post_payment));
         mounted.push("v1/payments".to_owned());
     }
+    let node_spec = crate::openapi::node_openapi(&mounted);
     state.mounted_routes = mounted;
 
     router
-        .merge(SwaggerUi::new("/v1/docs").url("/v1/openapi.json", ApiDoc::openapi()))
+        .merge(SwaggerUi::new("/v1/docs").url("/v1/openapi.json", node_spec))
         .layer(middleware::from_fn_with_state(state.clone(), require_api_key))
         .with_state(state)
 }
@@ -181,8 +180,10 @@ mod tests {
     use tw_chain::crypto::sign_ed25519 as sign;
     use tw_chain::primitives::asset::TokenAmount;
     use tw_chain::primitives::transaction::{GenesisTxHashSpec, Transaction};
+    use utoipa::OpenApi as _;
 
     use super::*;
+    use crate::openapi::ApiDoc;
     use crate::v1::debug::DebugData;
 
     /// Minimal `MempoolApi` test double: canned responses for every method except
@@ -351,6 +352,43 @@ mod tests {
 
     fn empty_current_block() -> CurrentBlockWithMutex {
         Arc::new(tokio::sync::Mutex::new(None))
+    }
+
+    /// The mounted paths a router reports on `GET /v1/debug` (`node_api`, built
+    /// alongside the `.route()` calls in `build_router`).
+    async fn reported_routes(app: Router) -> Vec<String> {
+        let response = app
+            .oneshot(Request::builder().uri("/v1/debug").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let data: DebugData = serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+            .expect("valid DebugData json");
+        data.node_api
+    }
+
+    /// The sorted `paths` keys of the OpenAPI document a router serves at
+    /// `/v1/openapi.json` (not api-key gated).
+    async fn served_openapi_paths(app: Router) -> Vec<String> {
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/openapi.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let value = body_json(response).await;
+        let mut paths: Vec<String> = value["paths"]
+            .as_object()
+            .expect("paths object")
+            .keys()
+            .cloned()
+            .collect();
+        paths.sort_unstable();
+        paths
     }
 
     /// A solo-miner `ApiState`: no embedded user node/DB/threaded-call sender, but it
@@ -1438,19 +1476,6 @@ mod tests {
 
     #[tokio::test]
     async fn miner_with_user_router_mounts_the_same_routes_as_miner_solo_plus_items() {
-        async fn reported_routes(app: Router) -> Vec<String> {
-            let response = app
-                .oneshot(Request::builder().uri("/v1/debug").body(Body::empty()).unwrap())
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let data: DebugData = serde_json::from_slice(
-                &response.into_body().collect().await.unwrap().to_bytes(),
-            )
-            .expect("valid DebugData json");
-            data.node_api
-        }
-
         let mut solo = reported_routes(miner_router(miner_solo_state().await)).await;
         let with_user = reported_routes(miner_router(miner_with_user_state().await)).await;
 
@@ -1487,19 +1512,6 @@ mod tests {
     /// same value every node reports to callers, so drift there is itself a bug.
     #[tokio::test]
     async fn openapi_documents_exactly_the_union_of_every_router_mounted_routes() {
-        async fn reported_routes(app: Router) -> Vec<String> {
-            let response = app
-                .oneshot(Request::builder().uri("/v1/debug").body(Body::empty()).unwrap())
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let data: DebugData = serde_json::from_slice(
-                &response.into_body().collect().await.unwrap().to_bytes(),
-            )
-            .expect("valid DebugData json");
-            data.node_api
-        }
-
         let pre_launch = reported_routes(pre_launch_router(ApiState::pre_launch(
             test_node(NodeType::PreLaunch).await,
             api_keys(vec![]),
@@ -1522,7 +1534,7 @@ mod tests {
         mounted.sort_unstable();
         mounted.dedup();
 
-        let spec = crate::openapi::ApiDoc::openapi();
+        let spec = ApiDoc::openapi();
         let value = serde_json::to_value(&spec).expect("openapi doc serializes");
         let mut documented: Vec<String> = value["paths"]
             .as_object()
@@ -1535,6 +1547,46 @@ mod tests {
         assert_eq!(
             documented, mounted,
             "ApiDoc must list exactly the union of paths mounted across all node routers"
+        );
+    }
+
+    /// Confirms per-node OpenAPI subsetting end-to-end: for each of the five node
+    /// router builders, the document actually served at `/v1/openapi.json` lists
+    /// exactly the paths that router itself reports as mounted on `/v1/debug` — not
+    /// the full `ApiDoc` aggregate.
+    #[tokio::test]
+    async fn served_openapi_lists_exactly_each_nodes_own_mounted_paths() {
+        async fn assert_served_matches_mounted(app: Router) -> Vec<String> {
+            let mounted = reported_routes(app.clone()).await;
+            let served = served_openapi_paths(app).await;
+
+            let mut expected: Vec<String> = mounted.iter().map(|route| format!("/{route}")).collect();
+            expected.sort_unstable();
+
+            assert_eq!(served, expected);
+            served
+        }
+
+        assert_served_matches_mounted(pre_launch_router(ApiState::pre_launch(
+            test_node(NodeType::PreLaunch).await,
+            api_keys(vec![]),
+            empty_routes_pow(),
+        )))
+        .await;
+
+        let storage_served = assert_served_matches_mounted(storage_router(empty_storage_state().await)).await;
+        assert!(
+            !storage_served.iter().any(|p| p == "/v1/payments"),
+            "storage node's served spec must not list /v1/payments: {storage_served:?}"
+        );
+
+        assert_served_matches_mounted(mempool_router(mempool_state(TestMempool::default()).await)).await;
+        assert_served_matches_mounted(miner_router(miner_solo_state().await)).await;
+
+        let user_served = assert_served_matches_mounted(user_router(user_state().await)).await;
+        assert!(
+            !user_served.iter().any(|p| p == "/v1/blocks/latest"),
+            "user node's served spec must not list /v1/blocks/latest: {user_served:?}"
         );
     }
 
