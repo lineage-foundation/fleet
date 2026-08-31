@@ -391,8 +391,9 @@ mod tests {
     /// A miner-with-embedded-user `ApiState` (mirrors `miner_node_with_user_routes`):
     /// same wallet DB / current-block capabilities as `miner_solo_state`, plus an
     /// aux user node and a `TestUser` threaded-call sender. The embedded user node
-    /// (its `user_calls_tx`) adds `/v1/items` over a solo miner; every other route is
-    /// keyed off `wallet_db`/`current_block`, so the two share the rest of their set.
+    /// (its `user_calls_tx`) adds the user-capability routes (e.g. `/v1/items`,
+    /// `/v1/payments`) over a solo miner; wallet/mining routes are keyed off
+    /// `wallet_db`/`current_block`, so the two share those.
     async fn miner_with_user_state() -> ApiState {
         let node = test_node(NodeType::Miner).await;
         let aux_node = test_node(NodeType::User).await;
