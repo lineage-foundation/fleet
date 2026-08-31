@@ -5,6 +5,10 @@ use utoipa::{Modify, OpenApi};
 
 use crate::error::ApiProblem;
 #[allow(unused_imports)]
+use crate::v1::balances::{
+    __path_get_balances, __path_query_balances, get_balances, query_balances, AddressesQuery, BalancesResponse,
+};
+#[allow(unused_imports)]
 use crate::v1::blockchain::{
     __path_get_blockchain_entry, __path_query_blockchain_entries, get_blockchain_entry, query_blockchain_entries,
     BlockchainEntryResponse, BlockchainItemMetaResponse, KeysQuery,
@@ -16,6 +20,13 @@ use crate::v1::blocks::{
 };
 #[allow(unused_imports)]
 use crate::v1::debug::{__path_get_debug, get_debug, DebugData, PeerInfo};
+#[allow(unused_imports)]
+use crate::v1::supply::{__path_get_supply, get_supply, SupplyResponse};
+#[allow(unused_imports)]
+use crate::v1::transactions::{
+    __path_get_transaction_status, __path_query_transaction_status, get_transaction_status, query_transaction_status,
+    HashesQuery, TxStatusResponse, TxStatusTypeResponse,
+};
 
 /// Aggregates every `/v1` operation ported so far into one OpenAPI 3.1 document,
 /// served at `/v1/openapi.json` with Swagger UI at `/v1/docs`.
@@ -33,6 +44,11 @@ use crate::v1::debug::{__path_get_debug, get_debug, DebugData, PeerInfo};
         get_blocks_batch,
         get_blockchain_entry,
         query_blockchain_entries,
+        get_supply,
+        get_balances,
+        query_balances,
+        get_transaction_status,
+        query_transaction_status,
     ),
     components(schemas(
         DebugData,
@@ -41,6 +57,12 @@ use crate::v1::debug::{__path_get_debug, get_debug, DebugData, PeerInfo};
         BlockchainEntryResponse,
         BlockchainItemMetaResponse,
         KeysQuery,
+        SupplyResponse,
+        BalancesResponse,
+        AddressesQuery,
+        TxStatusResponse,
+        TxStatusTypeResponse,
+        HashesQuery,
         ApiProblem,
     )),
     modifiers(&SecurityAddon),
@@ -82,12 +104,17 @@ mod tests {
         assert_eq!(
             paths,
             vec![
+                "/v1/balances",
+                "/v1/balances/query",
                 "/v1/blockchain-entries/query",
                 "/v1/blockchain-entries/{key}",
                 "/v1/blocks",
                 "/v1/blocks/latest",
                 "/v1/blocks/{num}",
                 "/v1/debug",
+                "/v1/supply",
+                "/v1/transactions/status",
+                "/v1/transactions/status:query",
             ]
         );
     }
