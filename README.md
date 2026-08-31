@@ -144,10 +144,16 @@ Routes ported so far:
 | `POST /v1/balances/query` | mempool |
 | `GET /v1/transactions/status` | mempool |
 | `POST /v1/transactions/status:query` | mempool |
+| `GET /v1/wallet` | user, miner |
+| `GET /v1/wallet/keypairs` | user, miner |
+| `GET /v1/transactions/outgoing` | user, miner |
+| `GET /v1/mining/current-block` | miner |
 
-`GET /v1/blocks` and the `.../query` POST routes take repeated query params or a JSON body respectively, for looking up more than one key at a time.
+`GET /v1/blocks` and the `.../query` POST routes take repeated query params or a JSON body respectively, for looking up more than one key at a time. `GET /v1/wallet` takes optional `page` and `spent` query params, matching the paging/spent-filter behaviour of the old wallet-info endpoint.
 
-`outgoing_transactions` and `mining/current-block` are not ported yet; they need state the API doesn't currently hold, so they're deferred to later work.
+Wallet routes are mounted on any node carrying a wallet DB (user, and a miner whether solo or paired with an embedded user node); `mining/current-block` is mounted on any node that mines.
+
+Wallet *writes* — requesting a payment address, importing keypairs, changing the passphrase, refreshing the running total — and transaction writes are the next phase; they aren't in this API yet.
 
 Routes that have a configured key require an `x-api-key` header; this is documented as an OpenAPI security scheme (`api_key`) in the spec. `pre_launch` has no HTTP API surface.
 
