@@ -82,12 +82,14 @@ fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool) -> R
             .route(
                 "/v1/transactions/status:query",
                 post(transactions::query_transaction_status),
-            );
+            )
+            .route("/v1/transactions", post(transactions::post_create_transactions));
         mounted.push("v1/supply".to_owned());
         mounted.push("v1/balances".to_owned());
         mounted.push("v1/balances/query".to_owned());
         mounted.push("v1/transactions/status".to_owned());
         mounted.push("v1/transactions/status:query".to_owned());
+        mounted.push("v1/transactions".to_owned());
     }
 
     if state.wallet_db.is_some() {
@@ -691,6 +693,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn post_create_transactions_returns_201_with_empty_map_for_empty_list() {
+        let app = mempool_router(mempool_state(TestMempool::default()).await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/transactions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"transactions":[]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = body_json(response).await;
+        assert_eq!(body["transactions"], serde_json::json!({}));
+    }
+
+    #[tokio::test]
+    async fn post_create_transactions_returns_400_problem_json_for_malformed_tx() {
+        let app = mempool_router(mempool_state(TestMempool::default()).await);
+
+        let body = serde_json::json!({
+            "transactions": [{
+                "inputs": [{
+                    "previous_out": null,
+                    "script_signature": {"stack": []},
+                }],
+                "outputs": [],
+                "version": 1,
+                "fees": null,
+                "druid_info": null,
+            }],
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/transactions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 400);
+        assert!(problem["detail"].is_string());
+    }
+
+    #[tokio::test]
     async fn get_wallet_info_returns_200_with_zeroed_totals_for_empty_wallet() {
         let app = miner_router(miner_solo_state().await);
 
@@ -1068,33 +1131,37 @@ mod tests {
 
     #[tokio::test]
     async fn mempool_only_resources_are_not_mounted_on_non_mempool_routers() {
-        let app = storage_router(empty_storage_state().await);
-
-        for (method, uri) in [
-            ("GET", "/v1/supply"),
-            ("GET", "/v1/balances"),
-            ("POST", "/v1/balances/query"),
-            ("GET", "/v1/transactions/status"),
-            ("POST", "/v1/transactions/status:query"),
+        for app in [
+            storage_router(empty_storage_state().await),
+            user_router(user_state().await),
         ] {
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method(method)
-                        .uri(uri)
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
+            for (method, uri) in [
+                ("GET", "/v1/supply"),
+                ("GET", "/v1/balances"),
+                ("POST", "/v1/balances/query"),
+                ("GET", "/v1/transactions/status"),
+                ("POST", "/v1/transactions/status:query"),
+                ("POST", "/v1/transactions"),
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
 
-            assert_eq!(response.status(), StatusCode::NOT_FOUND, "unexpected mount: {method} {uri}");
-            assert_ne!(
-                response.headers().get(header::CONTENT_TYPE),
-                Some(&header::HeaderValue::from_static("application/problem+json")),
-                "route should be unmounted (axum default 404), not our typed 404: {method} {uri}"
-            );
+                assert_eq!(response.status(), StatusCode::NOT_FOUND, "unexpected mount: {method} {uri}");
+                assert_ne!(
+                    response.headers().get(header::CONTENT_TYPE),
+                    Some(&header::HeaderValue::from_static("application/problem+json")),
+                    "route should be unmounted (axum default 404), not our typed 404: {method} {uri}"
+                );
+            }
         }
     }
 

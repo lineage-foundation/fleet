@@ -4,15 +4,18 @@
 //! and the reverse: turning a stored/serialized `Transaction` back into the same JSON
 //! shape.
 
+use std::collections::BTreeMap;
+use std::fmt;
+
 use fleet_core::utils::{decode_pub_key, decode_signature, StringError};
 use serde::de::{Error, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::fmt;
 use tw_chain::crypto::sign_ed25519::{PublicKey, Signature};
 use tw_chain::primitives::druid::DdeValues;
 use tw_chain::primitives::transaction::{OutPoint, Transaction, TxIn, TxOut};
 use tw_chain::script::lang::Script;
 use tw_chain::script::{OpCodes, StackEntry};
+use tw_chain::utils::transaction_utils::construct_tx_hash;
 use utoipa::ToSchema;
 
 /// Stack entry enum which stores Signature and PubKey items as hex strings
@@ -225,6 +228,26 @@ pub fn to_transaction(data: CreateTransaction) -> Result<Transaction, StringErro
         fees: fees.unwrap_or_default(),
         druid_info,
     })
+}
+
+/// Constructs the mapping of output address to asset for `POST /v1/transactions`, ported
+/// from legacy `construct_ctx_map`. The asset is rendered as JSON rather than through the
+/// legacy `APIAsset` wrapper. Faithful to the legacy keying: entries are keyed by
+/// transaction hash (not `(hash, address)`), so for a transaction with more than one
+/// output, only the last output ends up in the map.
+pub fn construct_ctx_map(transactions: &[Transaction]) -> BTreeMap<String, (String, serde_json::Value)> {
+    let mut tx_info = BTreeMap::new();
+
+    for tx in transactions {
+        for out in &tx.outputs {
+            let address = out.script_public_key.clone().unwrap_or_default();
+            let asset = serde_json::to_value(&out.value).unwrap_or(serde_json::Value::Null);
+
+            tx_info.insert(construct_tx_hash(tx), (address, asset));
+        }
+    }
+
+    tx_info
 }
 
 /// Create a `CreateTransaction` from a hex string representing a serialized `Transaction`
