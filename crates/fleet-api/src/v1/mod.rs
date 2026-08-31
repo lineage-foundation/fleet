@@ -5,6 +5,7 @@ pub mod balances;
 pub mod blockchain;
 pub mod blocks;
 pub mod debug;
+pub mod donations;
 pub mod items;
 pub mod mining;
 pub mod payments;
@@ -131,9 +132,11 @@ fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool, is_u
             .route(
                 "/v1/transactions:deserialize",
                 post(transactions::post_deserialize_transactions),
-            );
+            )
+            .route("/v1/donation-requests", post(donations::post_donation_request));
         mounted.push("v1/transactions:serialize".to_owned());
         mounted.push("v1/transactions:deserialize".to_owned());
+        mounted.push("v1/donation-requests".to_owned());
     }
 
     if state.mempool_calls_tx.is_some() || state.user_calls_tx.is_some() {
@@ -1817,6 +1820,80 @@ mod tests {
                     Request::builder()
                         .method("POST")
                         .uri("/v1/payments")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert_ne!(
+                response.headers().get(header::CONTENT_TYPE),
+                Some(&header::HeaderValue::from_static("application/problem+json")),
+                "route should be unmounted (axum default 404), not our typed 404"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn post_donation_request_returns_202_on_user_node() {
+        let app = user_router(user_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/donation-requests")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"address":"127.0.0.1:12345"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
+    async fn post_donation_request_returns_400_problem_json_for_a_non_socket_address() {
+        let app = user_router(user_state().await);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/donation-requests")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"address":"nope"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 400);
+    }
+
+    #[tokio::test]
+    async fn post_donation_request_route_is_not_mounted_on_non_user_routers() {
+        // Donation requests are user-only: unlike /v1/payments and /v1/items, even a
+        // miner paired with an embedded user node (miner_with_user_state) must not
+        // expose this route.
+        for app in [
+            mempool_router(mempool_state(TestMempool::default()).await),
+            storage_router(empty_storage_state().await),
+            miner_router(miner_with_user_state().await),
+        ] {
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/donation-requests")
                         .body(Body::empty())
                         .unwrap(),
                 )

@@ -21,6 +21,8 @@ use crate::v1::blocks::{
 #[allow(unused_imports)]
 use crate::v1::debug::{__path_get_debug, get_debug, DebugData, PeerInfo};
 #[allow(unused_imports)]
+use crate::v1::donations::{__path_post_donation_request, post_donation_request, DonationRequest};
+#[allow(unused_imports)]
 use crate::v1::items::{
     __path_post_create_item, post_create_item, CreateItemAcceptedResponse, CreateItemRequest, CreateItemResponse,
 };
@@ -88,6 +90,7 @@ use crate::v1::wallet::{
         get_current_block,
         post_create_item,
         post_payment,
+        post_donation_request,
     ),
     components(schemas(
         DebugData,
@@ -127,6 +130,7 @@ use crate::v1::wallet::{
         PaymentKind,
         PaymentRequest,
         PaymentAcceptedResponse,
+        DonationRequest,
         ApiProblem,
     )),
     modifiers(&SecurityAddon),
@@ -176,6 +180,7 @@ mod tests {
                 "/v1/blocks/latest",
                 "/v1/blocks/{num}",
                 "/v1/debug",
+                "/v1/donation-requests",
                 "/v1/items",
                 "/v1/mining/current-block",
                 "/v1/payments",
