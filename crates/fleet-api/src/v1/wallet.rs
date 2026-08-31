@@ -309,7 +309,7 @@ pub struct RunningTotalRefreshRequest {
 /// an embedded user node routes these through that user node (`aux_node`), exactly as the
 /// legacy `miner_node_with_user_routes` did; a solo miner or a standalone user node has no
 /// `aux_node`, so it uses the node itself.
-fn wallet_node(state: &ApiState) -> &fleet_core::Node {
+pub(crate) fn wallet_node(state: &ApiState) -> &fleet_core::Node {
     state.aux_node.as_ref().unwrap_or(&state.node)
 }
 
