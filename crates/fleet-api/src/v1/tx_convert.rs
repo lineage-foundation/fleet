@@ -231,19 +231,22 @@ pub fn to_transaction(data: CreateTransaction) -> Result<Transaction, StringErro
 }
 
 /// Constructs the mapping of output address to asset for `POST /v1/transactions`, ported
-/// from legacy `construct_ctx_map`. The asset is rendered as JSON rather than through the
-/// legacy `APIAsset` wrapper. Faithful to the legacy keying: entries are keyed by
-/// transaction hash (not `(hash, address)`), so for a transaction with more than one
-/// output, only the last output ends up in the map.
-pub fn construct_ctx_map(transactions: &[Transaction]) -> BTreeMap<String, (String, serde_json::Value)> {
+/// from legacy `construct_ctx_map`. The asset is rendered through the typed
+/// [`ApiAsset`](super::asset::ApiAsset) so the shape stays described in the OpenAPI spec.
+/// Faithful to the legacy keying: entries are keyed by transaction hash (not
+/// `(hash, address)`), so for a transaction with more than one output, only the last
+/// output ends up in the map.
+pub fn construct_ctx_map(transactions: &[Transaction]) -> super::asset::TxOutputMap {
+    use super::asset::{ApiAsset, TxOutputSummary};
+
     let mut tx_info = BTreeMap::new();
 
     for tx in transactions {
         for out in &tx.outputs {
             let address = out.script_public_key.clone().unwrap_or_default();
-            let asset = serde_json::to_value(&out.value).unwrap_or(serde_json::Value::Null);
+            let asset = ApiAsset::from(&out.value);
 
-            tx_info.insert(construct_tx_hash(tx), (address, asset));
+            tx_info.insert(construct_tx_hash(tx), TxOutputSummary { address, asset });
         }
     }
 

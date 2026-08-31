@@ -34,6 +34,8 @@ use crate::v1::transactions::{
     SerializeTransactionsRequest, SerializeTransactionsResponse, TxStatusResponse, TxStatusTypeResponse,
 };
 #[allow(unused_imports)]
+use crate::v1::asset::{ApiAsset, TxOutputSummary};
+#[allow(unused_imports)]
 use crate::v1::tx_convert::JsonSerializedTransaction;
 #[allow(unused_imports)]
 use crate::v1::wallet::{
@@ -92,6 +94,8 @@ use crate::v1::wallet::{
         HashesQuery,
         CreateTransactionsRequest,
         CreateTransactionsResponse,
+        ApiAsset,
+        TxOutputSummary,
         SerializeTransactionsRequest,
         SerializeTransactionsResponse,
         JsonSerializedTransaction,

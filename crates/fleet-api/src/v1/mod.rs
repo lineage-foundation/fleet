@@ -1,5 +1,6 @@
 //! `/v1` route handlers and per-node routers.
 
+pub mod asset;
 pub mod balances;
 pub mod blockchain;
 pub mod blocks;
@@ -725,6 +726,50 @@ mod tests {
         assert_eq!(response.status(), StatusCode::CREATED);
         let body = body_json(response).await;
         assert_eq!(body["transactions"], serde_json::json!({}));
+    }
+
+    #[tokio::test]
+    async fn post_create_transactions_renders_outputs_with_the_typed_asset_shape() {
+        let app = mempool_router(mempool_state(TestMempool::default()).await);
+
+        // One output paying 42 tokens to "some_address".
+        let body = serde_json::json!({
+            "transactions": [{
+                "inputs": [],
+                "outputs": [{
+                    "value": {"Token": 42},
+                    "locktime": 0,
+                    "script_public_key": "some_address"
+                }],
+                "version": 1,
+                "fees": null,
+                "druid_info": null
+            }]
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/transactions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = body_json(response).await;
+        // Keyed by (derived) tx hash; assert the single entry's typed shape.
+        let entry = body["transactions"]
+            .as_object()
+            .expect("transactions map")
+            .values()
+            .next()
+            .expect("one output summary");
+        assert_eq!(entry["address"], "some_address");
+        assert_eq!(entry["asset"], serde_json::json!({"kind": "token", "amount": 42}));
     }
 
     #[tokio::test]

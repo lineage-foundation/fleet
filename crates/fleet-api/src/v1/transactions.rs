@@ -186,9 +186,8 @@ pub struct CreateTransactionsRequest {
 /// Response body for `POST /v1/transactions`.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CreateTransactionsResponse {
-    /// Per-constructed-transaction summary keyed by tx hash: `[output_address, asset]`.
-    #[schema(value_type = Object)]
-    pub transactions: Value,
+    /// Per-constructed-transaction output summary, keyed by transaction hash.
+    pub transactions: super::asset::TxOutputMap,
 }
 
 /// Construct one or more transactions and submit them to the mempool.
@@ -232,9 +231,7 @@ pub async fn post_create_transactions(
         return Err(ApiProblem::internal(resp.reason));
     }
 
-    let transactions = serde_json::to_value(&ctx_map).map_err(|err| ApiProblem::internal(err.to_string()))?;
-
-    Ok((StatusCode::CREATED, Json(CreateTransactionsResponse { transactions })))
+    Ok((StatusCode::CREATED, Json(CreateTransactionsResponse { transactions: ctx_map })))
 }
 
 /// Request body for `POST /v1/transactions:serialize`.
