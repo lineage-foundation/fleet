@@ -7,6 +7,7 @@ pub mod debug;
 pub mod mining;
 pub mod supply;
 pub mod transactions;
+pub mod tx_convert;
 pub mod wallet;
 
 use axum::routing::{get, post, put};
