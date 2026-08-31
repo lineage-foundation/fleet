@@ -956,6 +956,7 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
+ "tw_chain",
  "utoipa",
  "utoipa-swagger-ui",
 ]
