@@ -614,4 +614,65 @@ mod tests {
             .unwrap();
         assert_eq!(authorized.status(), StatusCode::OK);
     }
+
+    /// Cross-checks `ApiDoc` (see `openapi.rs`) against what's actually mounted.
+    ///
+    /// Each router reports its own mounted paths on `GET /v1/debug` (`node_api`,
+    /// built alongside the `.route()` calls in `build_router`). This test hits
+    /// `/v1/debug` on every node router, unions the reported paths, and asserts
+    /// that's exactly the path set `ApiDoc` documents: nothing documented but
+    /// unmounted, nothing mounted but undocumented.
+    ///
+    /// This isn't a raw reflection of axum's internal route table (axum doesn't
+    /// expose one), so it still relies on `node_api` staying in sync with the
+    /// `.route()` calls a few lines above it in `build_router` — but that's the
+    /// same value every node reports to callers, so drift there is itself a bug.
+    #[tokio::test]
+    async fn openapi_documents_exactly_the_union_of_every_router_mounted_routes() {
+        async fn reported_routes(app: Router) -> Vec<String> {
+            let response = app
+                .oneshot(Request::builder().uri("/v1/debug").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let data: DebugData = serde_json::from_slice(
+                &response.into_body().collect().await.unwrap().to_bytes(),
+            )
+            .expect("valid DebugData json");
+            data.node_api
+        }
+
+        let pre_launch = reported_routes(pre_launch_router(ApiState::pre_launch(
+            test_node(NodeType::PreLaunch).await,
+            api_keys(vec![]),
+            empty_routes_pow(),
+        )))
+        .await;
+        let storage = reported_routes(storage_router(empty_storage_state().await)).await;
+        let mempool = reported_routes(mempool_router(mempool_state(TestMempool::default()).await)).await;
+
+        let mut mounted: Vec<String> = pre_launch
+            .into_iter()
+            .chain(storage)
+            .chain(mempool)
+            .map(|route| format!("/{route}"))
+            .collect();
+        mounted.sort_unstable();
+        mounted.dedup();
+
+        let spec = crate::openapi::ApiDoc::openapi();
+        let value = serde_json::to_value(&spec).expect("openapi doc serializes");
+        let mut documented: Vec<String> = value["paths"]
+            .as_object()
+            .expect("paths object")
+            .keys()
+            .cloned()
+            .collect();
+        documented.sort_unstable();
+
+        assert_eq!(
+            documented, mounted,
+            "ApiDoc must list exactly the union of paths mounted across all node routers"
+        );
+    }
 }

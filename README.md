@@ -129,12 +129,25 @@ This replaces the previous RPC-style API. The old flat action-paths (`/make_paym
 
 Behaviour differences worth noting for anyone porting from the old API: errors now use standard HTTP status codes with an `application/problem+json` body instead of a 200 with an in-body status string, so for example `GET /v1/blocks/latest` returns `404` when there is no block yet (the old endpoint returned `204`), and debug peer entries are now JSON objects rather than positional tuples.
 
-Only a couple of routes are ported so far, with more landing in later work:
+Routes ported so far:
 
 | Route | Nodes |
 |-------|-------|
 | `GET /v1/debug` | mempool, storage, miner, user |
 | `GET /v1/blocks/latest` | storage |
+| `GET /v1/blocks/{num}` | storage |
+| `GET /v1/blocks` | storage |
+| `GET /v1/blockchain-entries/{key}` | storage |
+| `POST /v1/blockchain-entries/query` | storage |
+| `GET /v1/supply` | mempool |
+| `GET /v1/balances` | mempool |
+| `POST /v1/balances/query` | mempool |
+| `GET /v1/transactions/status` | mempool |
+| `POST /v1/transactions/status:query` | mempool |
+
+`GET /v1/blocks` and the `.../query` POST routes take repeated query params or a JSON body respectively, for looking up more than one key at a time.
+
+`outgoing_transactions` and `mining/current-block` are not ported yet; they need state the API doesn't currently hold, so they're deferred to later work.
 
 Routes that have a configured key require an `x-api-key` header; this is documented as an OpenAPI security scheme (`api_key`) in the spec. `pre_launch` has no HTTP API surface.
 
