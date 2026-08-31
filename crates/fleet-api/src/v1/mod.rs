@@ -16,11 +16,9 @@ pub mod wallet;
 
 use axum::routing::{get, post, put};
 use axum::{middleware, Router};
-use utoipa::OpenApi as _;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::api_key::require_api_key;
-use crate::openapi::ApiDoc;
 use crate::state::ApiState;
 
 /// Router for a mempool node: `/v1/debug` + supply/balances/transaction-status.
@@ -148,10 +146,11 @@ fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool, is_u
         router = router.route("/v1/payments", post(payments::post_payment));
         mounted.push("v1/payments".to_owned());
     }
+    let node_spec = crate::openapi::node_openapi(&mounted);
     state.mounted_routes = mounted;
 
     router
-        .merge(SwaggerUi::new("/v1/docs").url("/v1/openapi.json", ApiDoc::openapi()))
+        .merge(SwaggerUi::new("/v1/docs").url("/v1/openapi.json", node_spec))
         .layer(middleware::from_fn_with_state(state.clone(), require_api_key))
         .with_state(state)
 }
@@ -181,8 +180,10 @@ mod tests {
     use tw_chain::crypto::sign_ed25519 as sign;
     use tw_chain::primitives::asset::TokenAmount;
     use tw_chain::primitives::transaction::{GenesisTxHashSpec, Transaction};
+    use utoipa::OpenApi as _;
 
     use super::*;
+    use crate::openapi::ApiDoc;
     use crate::v1::debug::DebugData;
 
     /// Minimal `MempoolApi` test double: canned responses for every method except
@@ -353,6 +354,43 @@ mod tests {
         Arc::new(tokio::sync::Mutex::new(None))
     }
 
+    /// The mounted paths a router reports on `GET /v1/debug` (`node_api`, built
+    /// alongside the `.route()` calls in `build_router`).
+    async fn reported_routes(app: Router) -> Vec<String> {
+        let response = app
+            .oneshot(Request::builder().uri("/v1/debug").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let data: DebugData = serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+            .expect("valid DebugData json");
+        data.node_api
+    }
+
+    /// The sorted `paths` keys of the OpenAPI document a router serves at
+    /// `/v1/openapi.json` (not api-key gated).
+    async fn served_openapi_paths(app: Router) -> Vec<String> {
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/openapi.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let value = body_json(response).await;
+        let mut paths: Vec<String> = value["paths"]
+            .as_object()
+            .expect("paths object")
+            .keys()
+            .cloned()
+            .collect();
+        paths.sort_unstable();
+        paths
+    }
+
     /// A solo-miner `ApiState`: no embedded user node/DB/threaded-call sender, but it
     /// carries both a wallet DB and a current-block mutex — enough to exercise the
     /// wallet/keypairs/outgoing-txs and mining/current-block resources without needing
@@ -389,6 +427,36 @@ mod tests {
         });
 
         ApiState::user(node, db, tx, api_keys(vec![]), empty_routes_pow(), empty_wallet_db())
+    }
+
+    /// A user `ApiState` like `user_state()`, but with `passphrase` set on the wallet
+    /// (rather than the empty-passphrase default `empty_wallet_db()` uses) — lets tests
+    /// exercise the wrong-passphrase `401` branch of `POST /v1/payments`, which
+    /// `test_passphrase` always accepts against an empty-passphrase wallet.
+    async fn user_state_with_passphrase(passphrase: &str) -> ApiState {
+        let node = test_node(NodeType::User).await;
+        let db = Arc::new(Mutex::new(new_db(
+            DbMode::InMemory,
+            &fleet_storage::DB_SPEC,
+            None,
+            None,
+        )));
+        let ThreadedCallChannel { tx, mut rx } = ThreadedCallChannel::<dyn UserApi>::default();
+
+        tokio::spawn(async move {
+            let mut user = TestUser;
+            while let Some(f) = rx.recv().await {
+                f(&mut user);
+            }
+        });
+
+        let mut wallet_db = empty_wallet_db();
+        wallet_db
+            .change_wallet_passphrase(String::new(), passphrase.to_owned())
+            .await
+            .expect("set wallet passphrase");
+
+        ApiState::user(node, db, tx, api_keys(vec![]), empty_routes_pow(), wallet_db)
     }
 
     /// A miner-with-embedded-user `ApiState` (mirrors `miner_node_with_user_routes`):
@@ -1438,19 +1506,6 @@ mod tests {
 
     #[tokio::test]
     async fn miner_with_user_router_mounts_the_same_routes_as_miner_solo_plus_items() {
-        async fn reported_routes(app: Router) -> Vec<String> {
-            let response = app
-                .oneshot(Request::builder().uri("/v1/debug").body(Body::empty()).unwrap())
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let data: DebugData = serde_json::from_slice(
-                &response.into_body().collect().await.unwrap().to_bytes(),
-            )
-            .expect("valid DebugData json");
-            data.node_api
-        }
-
         let mut solo = reported_routes(miner_router(miner_solo_state().await)).await;
         let with_user = reported_routes(miner_router(miner_with_user_state().await)).await;
 
@@ -1487,19 +1542,6 @@ mod tests {
     /// same value every node reports to callers, so drift there is itself a bug.
     #[tokio::test]
     async fn openapi_documents_exactly_the_union_of_every_router_mounted_routes() {
-        async fn reported_routes(app: Router) -> Vec<String> {
-            let response = app
-                .oneshot(Request::builder().uri("/v1/debug").body(Body::empty()).unwrap())
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let data: DebugData = serde_json::from_slice(
-                &response.into_body().collect().await.unwrap().to_bytes(),
-            )
-            .expect("valid DebugData json");
-            data.node_api
-        }
-
         let pre_launch = reported_routes(pre_launch_router(ApiState::pre_launch(
             test_node(NodeType::PreLaunch).await,
             api_keys(vec![]),
@@ -1522,7 +1564,7 @@ mod tests {
         mounted.sort_unstable();
         mounted.dedup();
 
-        let spec = crate::openapi::ApiDoc::openapi();
+        let spec = ApiDoc::openapi();
         let value = serde_json::to_value(&spec).expect("openapi doc serializes");
         let mut documented: Vec<String> = value["paths"]
             .as_object()
@@ -1535,6 +1577,46 @@ mod tests {
         assert_eq!(
             documented, mounted,
             "ApiDoc must list exactly the union of paths mounted across all node routers"
+        );
+    }
+
+    /// Confirms per-node OpenAPI subsetting end-to-end: for each of the five node
+    /// router builders, the document actually served at `/v1/openapi.json` lists
+    /// exactly the paths that router itself reports as mounted on `/v1/debug` — not
+    /// the full `ApiDoc` aggregate.
+    #[tokio::test]
+    async fn served_openapi_lists_exactly_each_nodes_own_mounted_paths() {
+        async fn assert_served_matches_mounted(app: Router) -> Vec<String> {
+            let mounted = reported_routes(app.clone()).await;
+            let served = served_openapi_paths(app).await;
+
+            let mut expected: Vec<String> = mounted.iter().map(|route| format!("/{route}")).collect();
+            expected.sort_unstable();
+
+            assert_eq!(served, expected);
+            served
+        }
+
+        assert_served_matches_mounted(pre_launch_router(ApiState::pre_launch(
+            test_node(NodeType::PreLaunch).await,
+            api_keys(vec![]),
+            empty_routes_pow(),
+        )))
+        .await;
+
+        let storage_served = assert_served_matches_mounted(storage_router(empty_storage_state().await)).await;
+        assert!(
+            !storage_served.iter().any(|p| p == "/v1/payments"),
+            "storage node's served spec must not list /v1/payments: {storage_served:?}"
+        );
+
+        assert_served_matches_mounted(mempool_router(mempool_state(TestMempool::default()).await)).await;
+        assert_served_matches_mounted(miner_router(miner_solo_state().await)).await;
+
+        let user_served = assert_served_matches_mounted(user_router(user_state().await)).await;
+        assert!(
+            !user_served.iter().any(|p| p == "/v1/blocks/latest"),
+            "user node's served spec must not list /v1/blocks/latest: {user_served:?}"
         );
     }
 
@@ -1717,6 +1799,38 @@ mod tests {
         assert_eq!(body["to_address"], "pay_addr");
         assert_eq!(body["amount"], serde_json::json!({"kind": "token", "amount": 5}));
         assert_eq!(body["tx_hash"], "test_payment_tx_hash");
+    }
+
+    #[tokio::test]
+    async fn post_payment_address_returns_401_problem_json_for_wrong_passphrase() {
+        let app = user_router(user_state_with_passphrase("secret").await);
+
+        let body = serde_json::json!({
+            "kind": "address",
+            "address": "pay_addr",
+            "amount": 5,
+            "passphrase": "wrong",
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/payments")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/problem+json"
+        );
+        let problem = body_json(response).await;
+        assert_eq!(problem["status"], 401);
     }
 
     #[tokio::test]

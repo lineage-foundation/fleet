@@ -129,7 +129,7 @@ This replaces the previous RPC-style API. The old flat action-paths (`/make_paym
 
 Behaviour differences worth noting for anyone porting from the old API: errors now use standard HTTP status codes with an `application/problem+json` body instead of a 200 with an in-body status string, so for example `GET /v1/blocks/latest` returns `404` when there is no block yet (the old endpoint returned `204`), and debug peer entries are now JSON objects rather than positional tuples.
 
-Routes ported so far:
+Routes:
 
 | Route | Nodes |
 |-------|-------|
@@ -145,7 +145,7 @@ Routes ported so far:
 | `GET /v1/transactions/status` | mempool |
 | `POST /v1/transactions/status:query` | mempool |
 | `POST /v1/transactions` | mempool |
-| `POST /v1/items` | mempool, user |
+| `POST /v1/items` | mempool, user, miner (paired with an embedded user node) |
 | `GET /v1/wallet` | user, miner |
 | `GET /v1/wallet/keypairs` | user, miner |
 | `POST /v1/wallet/addresses` | user, miner |
@@ -156,14 +156,25 @@ Routes ported so far:
 | `POST /v1/transactions:serialize` | user |
 | `POST /v1/transactions:deserialize` | user |
 | `GET /v1/mining/current-block` | miner |
-| `POST /v1/payments` | user, miner |
+| `POST /v1/payments` | user, miner (paired with an embedded user node) |
 | `POST /v1/donation-requests` | user |
 
 `GET /v1/blocks` and the `.../query` POST routes take repeated query params or a JSON body respectively, for looking up more than one key at a time. `GET /v1/wallet` takes optional `page` and `spent` query params, matching the paging/spent-filter behaviour of the old wallet-info endpoint.
 
 Wallet routes are mounted on any node carrying a wallet DB (user, and a miner whether solo or paired with an embedded user node); `mining/current-block` is mounted on any node that mines.
 
-That's the full write surface ported over from the old API; what's left is hardening — per-node OpenAPI subsets and a final docs pass.
+The table above lists routes against the node kinds that can serve them, but a solo miner and a miner paired with an embedded user node don't expose quite the same set, so here's the exposure broken down per node type instead:
+
+| Node type | Exposes |
+|-----------|---------|
+| `pre_launch` | no HTTP API surface |
+| `storage` | `debug`, `blocks/latest`, `blocks/{num}`, `blocks`, `blockchain-entries/{key}`, `blockchain-entries/query` |
+| `mempool` | `debug`, `supply`, `balances`, `balances/query`, `transactions/status`, `transactions/status:query`, `transactions`, `items` |
+| `user` | `debug`, `wallet`, `wallet/keypairs` (GET + POST), `wallet/addresses`, `wallet/passphrase`, `wallet/running-total:refresh`, `transactions/outgoing`, `transactions:serialize`, `transactions:deserialize`, `donation-requests`, `items`, `payments` |
+| `miner` (solo) | `debug`, `wallet`, `wallet/keypairs` (GET + POST), `wallet/addresses`, `wallet/passphrase`, `wallet/running-total:refresh`, `transactions/outgoing`, `mining/current-block` |
+| `miner` (paired with an embedded user node) | everything the solo miner exposes, plus `items` and `payments` |
+
+(All of the above are under `/v1/`.) A node's own `/v1/openapi.json` reflects exactly its own row here rather than the full combined spec, so Swagger UI at `/v1/docs` only ever shows routes that node actually serves.
 
 Routes that have a configured key require an `x-api-key` header; this is documented as an OpenAPI security scheme (`api_key`) in the spec. `pre_launch` has no HTTP API surface.
 

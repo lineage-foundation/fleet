@@ -56,13 +56,13 @@ use crate::v1::wallet::{
     WalletInfoResponse,
 };
 
-/// Aggregates every `/v1` operation ported so far into one OpenAPI 3.1 document,
-/// served at `/v1/openapi.json` with Swagger UI at `/v1/docs`.
+/// Aggregates every `/v1` operation ported so far into one OpenAPI 3.1 document.
 ///
 /// Not every operation listed here is mounted on every node's router (e.g. the
 /// `blocks`/`blockchain-entries` resources are storage-only); this single document
-/// describes the API surface as a whole. Per-node OpenAPI subsets are a future
-/// refinement.
+/// is the aggregate source of truth for the API surface as a whole. Each node
+/// instead serves a [`node_openapi`]-filtered subset of it at its own
+/// `/v1/openapi.json`, with Swagger UI at `/v1/docs`.
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -137,6 +137,17 @@ use crate::v1::wallet::{
     info(title = "fleet REST API", description = "REST API for fleet nodes, served under /v1.")
 )]
 pub struct ApiDoc;
+
+/// Build the OpenAPI document a single node serves: the aggregate `ApiDoc` filtered to
+/// the paths this node actually mounts (`mounted`, without leading slashes). Component
+/// schemas are left intact (shared type definitions; unreferenced ones are harmless).
+pub fn node_openapi(mounted: &[String]) -> utoipa::openapi::OpenApi {
+    use std::collections::HashSet;
+    let keep: HashSet<String> = mounted.iter().map(|m| format!("/{m}")).collect();
+    let mut spec = ApiDoc::openapi();
+    spec.paths.paths.retain(|path, _| keep.contains(path));
+    spec
+}
 
 struct SecurityAddon;
 
