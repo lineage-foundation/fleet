@@ -63,7 +63,7 @@ async fn run_node(matches: &ArgMatches<'_>) {
         info!("REST API started on port {:?}", api_addr.port());
         info!("");
 
-        let mut bind_address = "0.0.0.0:0".parse::<SocketAddr>().unwrap();
+        let mut bind_address = "[::]:0".parse::<SocketAddr>().unwrap();
         bind_address.set_port(api_addr.port());
         let node_conn_debug = node_conn.clone();
 

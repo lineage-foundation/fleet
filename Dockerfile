@@ -153,6 +153,10 @@ FROM gcr.io/distroless/cc-debian13@sha256:9b615fff20e1a4fad29c2b30562580b212c7dd
 
 COPY .docker/conf/node_settings.toml /etc/node_settings.toml
 COPY .docker/conf/tls_certificates.json /etc/tls_certificates.json
+# Empty-cert TLS config: set TLS_CONFIG=/etc/tls_certificates_none.json to run node
+# peer comms without TLS (e.g. on an isolated private network where the baked cert
+# names don't match the runtime hostnames).
+COPY .docker/conf/tls_certificates_none.json /etc/tls_certificates_none.json
 COPY .docker/conf/initial_block.json /etc/initial_block.json
 COPY .docker/conf/api_config.json /etc/api_config.json
 COPY .docker/conf/initial_issuance.json /etc/initial_issuance.json
