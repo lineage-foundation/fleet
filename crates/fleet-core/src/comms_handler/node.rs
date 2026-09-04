@@ -88,7 +88,7 @@ use crate::bounded_hash_set::BoundedHashSet;
 use crate::comms_handler::error::PeerInfo;
 use crate::constants::NETWORK_VERSION;
 use crate::interfaces::{node_type_as_str, CommMessage, NodeType, Token};
-use crate::utils::MpscTracingSender;
+use crate::utils::{canonical_socket_addr, MpscTracingSender};
 use bincode::{deserialize, serialize};
 use bytes::Bytes;
 use futures::future::join_all;
@@ -420,7 +420,7 @@ impl Node {
 
         if !is_full {
             // Spawn the tasks to manage the peer
-            let peer_addr = socket.peer_addr();
+            let peer_addr = canonical_socket_addr(socket.peer_addr());
             let peer = self.handle_peer(socket, peer_span.clone(), is_initiator);
 
             peer_span.in_scope(|| trace!("added new peer: {:?}", peer_addr));
@@ -990,7 +990,8 @@ impl Node {
         );
         // Derive IP from peer_out_addr; resolved through connection
         // Use port from peer_in_addr; resolved through handshake data
-        peer_in_addr = SocketAddr::new(peer_out_addr.ip(), peer_in_addr.port());
+        peer_in_addr =
+            canonical_socket_addr(SocketAddr::new(peer_out_addr.ip(), peer_in_addr.port()));
         if !self.is_compatible(peer_type, network_version) {
             return Err(CommsError::PeerIncompatible(PeerInfo {
                 node_type: Some(peer_type),
@@ -1179,7 +1180,7 @@ impl Node {
     /// ### Returns
     /// A new `Peer` instance.
     fn handle_peer(&self, socket: TcpTlsStream, span: Span, is_initiator: bool) -> Peer {
-        let peer_addr = socket.peer_addr();
+        let peer_addr = canonical_socket_addr(socket.peer_addr());
         let peer_cert = socket.peer_tls_certificate();
 
         let (send_tx, mut send_rx) = mpsc::channel(128);

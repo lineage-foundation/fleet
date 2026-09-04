@@ -126,6 +126,11 @@ pub struct StorageNode {
     db: Arc<Mutex<SimpleDb>>,
     local_events: LocalEventChannel,
     mempool_addr: SocketAddr,
+    /// Address of the mempool connection the latest block arrived on, used to route the
+    /// block-stored notification back over that same connection. Falls back to
+    /// `mempool_addr` when unset. This avoids relying on `mempool_addr` matching the peer
+    /// key, which does not hold when a node's source address differs from its resolved one.
+    mempool_reply_addr: Option<SocketAddr>,
     api_info: (SocketAddr, Option<TlsPrivateInfo>, ApiKeys, RoutesPoWInfo),
     whitelisted: HashMap<SocketAddr, bool>,
     shutdown_group: BTreeSet<SocketAddr>,
@@ -203,6 +208,7 @@ impl StorageNode {
             api_info: (api_addr, api_tls_info, api_keys, api_pow_info),
             local_events: Default::default(),
             mempool_addr,
+            mempool_reply_addr: None,
             whitelisted: Default::default(),
             shutdown_group,
             blockchain_item_fetched: Default::default(),
@@ -872,8 +878,9 @@ impl StorageNode {
     pub async fn send_stored_block(&mut self) -> Result<()> {
         // Only the first call will send to storage.
         if let Some(block) = self.get_last_block_stored().clone() {
+            let mempool = self.mempool_reply_addr.unwrap_or(self.mempool_addr);
             self.node
-                .send(self.mempool_addr, MempoolRequest::SendBlockStored(block))
+                .send(mempool, MempoolRequest::SendBlockStored(block))
                 .await?;
         }
 
@@ -947,6 +954,10 @@ impl StorageNode {
         peer: SocketAddr,
         mined_block: Option<MinedBlock>,
     ) -> Option<Response> {
+        // Remember the connection the block came in on so the block-stored notification is
+        // routed back over it, rather than to a separately resolved `mempool_addr`.
+        self.mempool_reply_addr = Some(peer);
+
         let (common, extra_info) = if let Some(MinedBlock { common, extra_info }) = mined_block {
             (common, extra_info)
         } else {

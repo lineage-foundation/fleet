@@ -2054,7 +2054,13 @@ impl MempoolNode {
         peer: SocketAddr,
         previous_block_info: BlockStoredInfo,
     ) -> Option<Response> {
-        if peer != self.storage_addr {
+        // Authorize by negotiated peer type rather than by exact address: the notification
+        // arrives on the connection the storage node opened to us, which is keyed by its
+        // source address and need not equal the resolved `storage_addr`.
+        if !matches!(
+            self.node.get_peer_node_type(peer).await,
+            Ok(NodeType::Storage)
+        ) {
             return Some(Response {
                 success: false,
                 reason: "Received block stored not from our storage peer".to_owned(),

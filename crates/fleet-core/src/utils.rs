@@ -538,7 +538,7 @@ pub async fn create_socket_addr(url_str: &str) -> Result<SocketAddr, Box<dyn std
 
     match handle.await {
         Ok(v) => match v {
-            Some(v) => Ok(v),
+            Some(v) => Ok(canonical_socket_addr(v)),
             None => Err("Failed to parse URL".into()),
         },
         Err(_e) => Err("Failed to parse URL".into()),
@@ -554,6 +554,23 @@ pub async fn create_socket_addr_for_list(
         result.push(socket_addr);
     }
     Ok(result)
+}
+
+/// Normalises an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) to the equivalent plain IPv4
+/// address, leaving all other addresses untouched.
+///
+/// A listener bound to the IPv6 wildcard (`[::]`) accepts IPv4 connections as IPv4-mapped
+/// IPv6, so the same peer can appear as `a.b.c.d` or `::ffff:a.b.c.d`. Those compare unequal
+/// as `SocketAddr`, which breaks peer lookup keyed by address. Canonicalising both the
+/// configured addresses and the observed peer addresses keeps them comparable.
+pub fn canonical_socket_addr(addr: SocketAddr) -> SocketAddr {
+    match addr {
+        SocketAddr::V6(v6) => match v6.ip().to_ipv4_mapped() {
+            Some(v4) => SocketAddr::new(IpAddr::V4(v4), addr.port()),
+            None => addr,
+        },
+        SocketAddr::V4(_) => addr,
+    }
 }
 
 /// Generates a ProofOfWork for a given address
@@ -1634,6 +1651,24 @@ mod util_tests {
             domain_with_port_addr,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 12300)
         );
+    }
+
+    #[test]
+    fn test_canonical_socket_addr() {
+        // IPv4-mapped IPv6 collapses to the equivalent plain IPv4 (port preserved).
+        let mapped: SocketAddr = "[::ffff:10.0.0.5]:12300".parse().unwrap();
+        assert_eq!(
+            canonical_socket_addr(mapped),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)), 12300)
+        );
+
+        // Plain IPv4 is unchanged.
+        let v4 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)), 12300);
+        assert_eq!(canonical_socket_addr(v4), v4);
+
+        // A genuine (non-mapped) IPv6 address is left untouched.
+        let v6: SocketAddr = "[2001:db8::1]:12300".parse().unwrap();
+        assert_eq!(canonical_socket_addr(v6), v6);
     }
 
     #[test]
