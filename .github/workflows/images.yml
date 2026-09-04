@@ -4,7 +4,8 @@ name: Build and push node images
 # Registry (GHCR): ghcr.io/<owner>/<node>. Each image is a single Docker
 # stage/target of the multi-target Dockerfile. Runs on a published Release
 # (tagged with the release version + `latest`) and on pushes to main (tagged
-# `main` + the commit sha) so deployments can pin an image by reference.
+# `main`, `latest`, and the commit sha) so deployments can pin by reference or
+# track `latest` (main tip). The testnet tracks `latest`.
 
 on:
   release:
@@ -41,7 +42,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/${{ matrix.node }}
           tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'release' }}
             type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,format=short
             type=semver,pattern={{version}},enable=${{ github.event_name == 'release' }}
