@@ -3,6 +3,7 @@
 use super::{CommsError, Result};
 use crate::configurations::{TlsPrivateInfo, TlsSpec};
 use rustls_pemfile::{certs, pkcs8_private_keys};
+use socket2::{SockRef, TcpKeepalive};
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::fmt;
@@ -11,6 +12,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
@@ -21,6 +23,7 @@ use tokio_rustls::rustls::{
 use tokio_rustls::webpki::{DnsNameRef, EndEntityCert};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use tokio_stream::Stream;
+use tracing::warn;
 
 pub type TlsStreamClient = tokio_rustls::client::TlsStream<TcpStream>;
 pub type TlsStreamServer = tokio_rustls::server::TlsStream<TcpStream>;
@@ -178,6 +181,7 @@ impl TcpTlsListner {
 
     async fn next_tcp_tls_stream(&mut self) -> Result<TcpTlsStream> {
         let (stream, _addr) = self.tcp_listener.accept().await?;
+        set_tcp_keepalive(&stream);
         if let Some(tls_acceptor) = &mut self.tls_acceptor {
             let stream = tls_acceptor.accept(stream).await?;
             let peer_addr = stream.get_ref().0.peer_addr()?;
@@ -221,6 +225,7 @@ impl TcpTlsConnector {
 
     pub async fn connect(&self, addr: SocketAddr) -> Result<TcpTlsStream> {
         let stream = TcpStream::connect(addr).await?;
+        set_tcp_keepalive(&stream);
 
         if let Some(tls_connector) = &self.tls_connector {
             let tls_name = socket_name_mapping_or_default(&self.socket_name_mapping, addr);
@@ -238,6 +243,18 @@ impl TcpTlsConnector {
 
     pub fn socket_name_mapping(&self, addr: SocketAddr) -> String {
         socket_name_mapping_or_default(&self.socket_name_mapping, addr)
+    }
+}
+
+/// Enable TCP keepalive so a broken connection (e.g. a peer that moved to a new address)
+/// fails its read half within a bounded time, letting the peer be dropped and reconnected
+/// promptly rather than lingering until the kernel's default retransmission timeout.
+fn set_tcp_keepalive(stream: &TcpStream) {
+    let keepalive = TcpKeepalive::new()
+        .with_time(Duration::from_secs(20))
+        .with_interval(Duration::from_secs(10));
+    if let Err(e) = SockRef::from(stream).set_tcp_keepalive(&keepalive) {
+        warn!("Failed to set TCP keepalive: {e:?}");
     }
 }
 
