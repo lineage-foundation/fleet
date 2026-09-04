@@ -166,6 +166,7 @@ impl UserNode {
         let mempool_addr = create_socket_addr(&raw_mempool_addr.address)
             .await
             .map_err(|_| UserError::ConfigError("Invalid mempool address"))?;
+        let mempool_host = raw_mempool_addr.address.clone();
 
         let tls_addr = create_socket_addr(&addr).await.unwrap();
         let tcp_tls_config = TcpTlsConfig::from_tls_spec(tls_addr, &config.tls_config)?;
@@ -185,6 +186,9 @@ impl UserNode {
             false,
         )
         .await?;
+        // Re-resolve the mempool hostname when (re)connecting so the user node follows the
+        // mempool across address changes while sending to a stable key.
+        node.register_peer_hostname(mempool_addr, mempool_host).await;
 
         let wallet_db = match extra.shared_wallet_db {
             Some(shared_db) => shared_db,
