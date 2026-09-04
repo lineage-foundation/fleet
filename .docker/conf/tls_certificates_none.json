@@ -1,5 +1,7 @@
 {
     "tls_config": {
-        "pem_certificates": {}
+        "socket_name_mapping": {},
+        "pem_certificates": {},
+        "pem_pkcs8_private_keys": {}
     }
 }
