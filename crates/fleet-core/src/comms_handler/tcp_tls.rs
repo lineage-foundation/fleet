@@ -156,7 +156,10 @@ impl TcpTlsListner {
     }
 
     pub async fn new_raw_listner(address: SocketAddr) -> Result<TcpListener> {
-        let mut bind_address = "0.0.0.0:0".parse::<SocketAddr>().unwrap();
+        // Bind the IPv6 wildcard so the listener is reachable over IPv6-only private
+        // networks; on Linux this is dual-stack (bindv6only=0 by default), so it still
+        // accepts IPv4 connections. Only the port from `address` is used.
+        let mut bind_address = "[::]:0".parse::<SocketAddr>().unwrap();
         bind_address.set_port(address.port());
         Ok(TcpListener::bind(bind_address).await?)
     }
