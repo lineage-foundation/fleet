@@ -148,6 +148,10 @@ impl MempoolNode {
             true,
         )
         .await?;
+        // Re-resolve the storage hostname when (re)connecting so the mempool follows the
+        // storage node across address changes while sending to a stable key.
+        node.register_peer_hostname(storage_addr, raw_storage_addr.address.clone())
+            .await;
         let node_raft = MempoolRaft::new(&config, extra.raft_db.take()).await;
 
         if config.backup_restore.unwrap_or(false) {

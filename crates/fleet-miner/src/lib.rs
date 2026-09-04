@@ -182,6 +182,7 @@ impl MinerNode {
         let mempool_addr = create_socket_addr(&raw_mempool_addr.address)
             .await
             .map_err(|_| MinerError::ConfigError("Invalid mempool node address in config file"))?;
+        let mempool_host = raw_mempool_addr.address.clone();
 
         // Restore old keys if backup is present
         if config.backup_restore.unwrap_or(false) {
@@ -221,6 +222,9 @@ impl MinerNode {
             false,
         )
         .await?;
+        // Re-resolve the mempool hostname when (re)connecting so the miner follows the
+        // mempool across address changes while sending to a stable key.
+        node.register_peer_hostname(mempool_addr, mempool_host).await;
         let api_pow_info = to_route_pow_infos(config.routes_pow.clone());
         let static_miner_address = Arc::new(RwLock::new(config.static_miner_address.clone()));
         let mining_api_key = config.mining_api_key.clone();

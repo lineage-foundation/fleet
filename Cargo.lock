@@ -996,6 +996,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
+ "socket2",
  "tokio",
  "tokio-rustls 0.23.4",
  "tokio-stream",

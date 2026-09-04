@@ -88,7 +88,7 @@ use crate::bounded_hash_set::BoundedHashSet;
 use crate::comms_handler::error::PeerInfo;
 use crate::constants::NETWORK_VERSION;
 use crate::interfaces::{node_type_as_str, CommMessage, NodeType, Token};
-use crate::utils::{canonical_socket_addr, MpscTracingSender};
+use crate::utils::{canonical_socket_addr, create_socket_addr, MpscTracingSender};
 use bincode::{deserialize, serialize};
 use bytes::Bytes;
 use futures::future::join_all;
@@ -174,6 +174,12 @@ pub struct Node {
     heartbeat_handle: Option<Arc<JoinHandle<()>>>,
     /// Add rate limiting and backoff for miner connections
     miner_connection_attempts: Arc<RwLock<HashMap<SocketAddr, u32>>>,
+    /// Maps a peer's stable address (its first-resolved configured address, used as the
+    /// peer-map key and by all outbound sends) to the hostname it was resolved from. When
+    /// dialing such a peer the hostname is re-resolved to its current address, so a peer
+    /// that has moved to a new address (e.g. after a redeploy) is reached again while the
+    /// stable key the rest of the node uses stays unchanged.
+    peer_hostnames: Arc<RwLock<HashMap<SocketAddr, String>>>,
 }
 
 pub(crate) struct Peer {
@@ -287,6 +293,7 @@ impl Node {
             connect_to_handshake_contacts: false,
             heartbeat_handle: None,
             miner_connection_attempts: Arc::new(RwLock::new(HashMap::new())),
+            peer_hostnames: Arc::new(RwLock::new(HashMap::new())),
         };
 
         if !disable_listening {
@@ -371,7 +378,7 @@ impl Node {
                                 peer_addr = tracing::field::debug(conn.peer_addr())
                             );
 
-                            let new_peer = node.add_peer(conn, false, peer_span, true).await;
+                            let new_peer = node.add_peer(conn, false, peer_span, true, None).await;
                             match new_peer {
                                 Ok(()) => {}
                                 Err(error) => warn!(?error, "Could not add a new peer"),
@@ -408,6 +415,7 @@ impl Node {
         force_add: bool,
         peer_span: Span,
         is_initiator: bool,
+        key_override: Option<SocketAddr>,
     ) -> Result<()> {
         let mut peers = self.peers.write().await;
         let is_full = peers.len() >= self.peer_limit;
@@ -419,9 +427,12 @@ impl Node {
         }
 
         if !is_full {
-            // Spawn the tasks to manage the peer
-            let peer_addr = canonical_socket_addr(socket.peer_addr());
-            let peer = self.handle_peer(socket, peer_span.clone(), is_initiator);
+            // Spawn the tasks to manage the peer. `key_override` pins the peer to its stable
+            // address (used for outbound connections whose dial address may differ); inbound
+            // connections fall back to the observed source address.
+            let peer_addr =
+                canonical_socket_addr(key_override.unwrap_or_else(|| socket.peer_addr()));
+            let peer = self.handle_peer(socket, peer_span.clone(), is_initiator, key_override);
 
             peer_span.in_scope(|| trace!("added new peer: {:?}", peer_addr));
 
@@ -443,6 +454,33 @@ impl Node {
         unconnected.copied().collect()
     }
 
+    /// Record the hostname a peer's stable address was resolved from, so the address can be
+    /// re-resolved when (re)connecting to it. Peers without an entry (e.g. miners dialing in)
+    /// are dialed at their stable address directly. An empty host is ignored.
+    pub async fn register_peer_hostname(&self, stable_addr: SocketAddr, host: impl Into<String>) {
+        let host = host.into();
+        if !host.is_empty() {
+            self.peer_hostnames.write().await.insert(stable_addr, host);
+        }
+    }
+
+    /// Resolve the address to dial for a peer identified by its stable address. If a hostname
+    /// was registered for it, re-resolve that (following address changes); otherwise dial the
+    /// stable address directly. Falls back to the stable address if re-resolution fails.
+    async fn resolve_dial_address(&self, peer: SocketAddr) -> SocketAddr {
+        let host = self.peer_hostnames.read().await.get(&peer).cloned();
+        match host {
+            Some(host) => match create_socket_addr(&host).await {
+                Ok(addr) => addr,
+                Err(e) => {
+                    trace!(?peer, ?host, ?e, "Re-resolve failed; dialing stable address");
+                    peer
+                }
+            },
+            None => peer,
+        }
+    }
+
     /// Establishes a connection to a remote peer.
     /// Compared to `connect_to`, this function will not send the handshake message and won't wait for a response.
     async fn connect_to_peer(&mut self, peer: SocketAddr) -> Result<()> {
@@ -454,11 +492,13 @@ impl Node {
                 }));
             }
 
-            let stream = self.tcp_tls_connector.read().await.connect(peer).await?;
-            let peer_addr = stream.peer_addr();
+            // Dial the current address for this peer, but key it under its stable address so
+            // outbound sends keep working across the peer's address changes.
+            let dial_addr = self.resolve_dial_address(peer).await;
+            let stream = self.tcp_tls_connector.read().await.connect(dial_addr).await?;
 
-            let span = info_span!(parent: &self.span, "connect_to", ?peer_addr);
-            self.add_peer(stream, false, span, false).await?;
+            let span = info_span!(parent: &self.span, "connect_to", ?peer, ?dial_addr);
+            self.add_peer(stream, false, span, false, Some(peer)).await?;
         }
         Ok(())
     }
@@ -1179,8 +1219,14 @@ impl Node {
     ///
     /// ### Returns
     /// A new `Peer` instance.
-    fn handle_peer(&self, socket: TcpTlsStream, span: Span, is_initiator: bool) -> Peer {
-        let peer_addr = canonical_socket_addr(socket.peer_addr());
+    fn handle_peer(
+        &self,
+        socket: TcpTlsStream,
+        span: Span,
+        is_initiator: bool,
+        key_override: Option<SocketAddr>,
+    ) -> Peer {
+        let peer_addr = canonical_socket_addr(key_override.unwrap_or_else(|| socket.peer_addr()));
         let peer_cert = socket.peer_tls_certificate();
 
         let (send_tx, mut send_rx) = mpsc::channel(128);

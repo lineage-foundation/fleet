@@ -43,6 +43,37 @@ async fn direct_messages() {
     complete_mempool_nodes(nodes).await;
 }
 
+/// A peer registered with a hostname is reached by re-resolving that hostname at dial time,
+/// while it is keyed under a stable address that differs from its actual one. This mirrors
+/// reaching a peer that has moved to a new address: a send addressed to the stable key still
+/// arrives because the dial follows the hostname to the peer's current address.
+#[tokio::test(flavor = "current_thread")]
+async fn connect_reresolves_registered_hostname() {
+    let _ = tracing_log_try_init();
+
+    let mut nodes = create_mempool_nodes(2, 2).await;
+    let (n1, tail) = nodes.split_first_mut().unwrap();
+    let (n2, _) = tail.split_first_mut().unwrap();
+
+    // Stable key n2 uses for n1; deliberately not n1's real listener address. The registered
+    // hostname resolves to n1's actual listener, so the dial must re-resolve to reach it.
+    let stable_addr: SocketAddr = "127.0.0.1:2".parse().unwrap();
+    let n1_host = format!("127.0.0.1:{}", n1.local_address().port());
+    n2.register_peer_hostname(stable_addr, n1_host).await;
+
+    n2.connect_to(stable_addr).await.unwrap();
+    n2.send(stable_addr, "Hello1").await.unwrap();
+
+    if let Some(Event::NewFrame { peer: _, frame }) = n1.next_event().await {
+        let recv_frame: &str = deserialize(&frame).unwrap();
+        assert_eq!(recv_frame, "Hello1");
+    } else {
+        panic!("expected a frame from the peer reached via re-resolution");
+    }
+
+    complete_mempool_nodes(nodes).await;
+}
+
 /// Check that 2 prelaunch nodes can exchange arbitrary messages in both direction,
 /// using their public address after one node connected to the other.
 #[tokio::test(flavor = "current_thread")]
