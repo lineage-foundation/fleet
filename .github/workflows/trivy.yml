@@ -1,5 +1,7 @@
-# Trivy: repository (vuln + misconfiguration) and built container image.
-# Fails the job on CRITICAL or HIGH severity findings (see `.trivyignore` for justified exceptions).
+# Trivy: repository filesystem scan (vuln + misconfiguration).
+# Container images are built and scanned in the images workflow (images.yml) as part of the
+# build, so they are not rebuilt here. Fails on CRITICAL or HIGH findings (see `.trivyignore`
+# for justified exceptions).
 name: Trivy
 
 on:
@@ -60,61 +62,3 @@ jobs:
           skip-dirs: target,.git,run,tasks,crates/fleet/src/db/db,crates/fleet/src/wallet/wallet,crates/fleet/src/bin/tls_data
           # Same PEM-in-JSON fixtures as image; not exercised in current deployments.
           skip-files: crates/fleet/src/bin/tls_certificates.json,.docker/conf/tls_certificates.json
-
-  trivy-image:
-    name: Docker build + Trivy image
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: docker/setup-buildx-action@v4
-
-      # The miner image is the superset (GPU build plus the X11/xcb donor libs), so its
-      # OS-package CVE surface covers the slim images' shared distroless base. We also scan
-      # one slim image (mempool) to exercise the non-miner path; it reuses the cached builder
-      # layer, so the extra build is cheap.
-      - name: Build miner image (linux/amd64)
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          target: miner
-          push: false
-          load: true
-          tags: fleet-miner:ci
-          platforms: linux/amd64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Run Trivy (miner image)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          scan-type: image
-          image-ref: fleet-miner:ci
-          severity: ${{ env.TRIVY_SEVERITY }}
-          exit-code: "1"
-          trivyignores: .trivyignore
-          # PEM material in bundled JSON placeholder; TLS not used for this image path (see Dockerfile → /etc/tls_certificates.json).
-          skip-files: /etc/tls_certificates.json
-
-      - name: Build mempool image (slim, linux/amd64)
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          target: mempool
-          push: false
-          load: true
-          tags: fleet-mempool:ci
-          platforms: linux/amd64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Run Trivy (mempool image)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          scan-type: image
-          image-ref: fleet-mempool:ci
-          severity: ${{ env.TRIVY_SEVERITY }}
-          exit-code: "1"
-          trivyignores: .trivyignore
-          skip-files: /etc/tls_certificates.json
