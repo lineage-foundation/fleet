@@ -1,22 +1,51 @@
-name: Build and push node images
+name: Build, scan and push node images
 
-# Builds the slim per-node images and pushes them to the GitHub Container
-# Registry (GHCR): ghcr.io/<owner>/<node>. Each image is a single Docker
-# stage/target of the multi-target Dockerfile. Runs on a published Release
-# (tagged with the release version + `latest`) and on pushes to main (tagged
-# `main`, `latest`, and the commit sha) so deployments can pin by reference or
-# track `latest` (main tip). The testnet tracks `latest`.
+# Builds the slim per-node images, scans each with Trivy, and pushes only clean images to
+# the GitHub Container Registry (GHCR): ghcr.io/<owner>/<node>. Each image is a single
+# Docker stage/target of the multi-target Dockerfile.
+#
+# Building and scanning happen here, in one place: the image is built once into the local
+# daemon, scanned, and only then pushed (the push reuses the cached build layers). Pull
+# requests build and scan without pushing, so a vulnerable image is caught before merge and
+# never published. Pushes to main and published releases also push the image.
+#
+# Tags: release -> version + `latest`; push to main -> `main`, `latest`, and the commit sha,
+# so deployments can pin by reference or track `latest` (main tip). The testnet tracks `latest`.
 
 on:
   release:
     types: [published]
   push:
     branches: [main]
+  # On PRs, build and scan (no push) when the image's contents or vulnerability surface can
+  # change: the Dockerfile/base, baked config, or the dependency set. Source-only changes do
+  # not alter the scanned surface, so they are excluded to avoid rebuilding images per commit.
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".docker/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**/Cargo.toml"
+      - "bins/**/Cargo.toml"
+      - ".github/workflows/images.yml"
+      - ".trivyignore"
+
+concurrency:
+  group: images-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Opt into Node.js 24 for JS actions ahead of GHES runner defaults.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  TRIVY_SEVERITY: CRITICAL,HIGH
 
 jobs:
-  build-push:
+  build-scan-push:
     name: ${{ matrix.node }}
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       contents: read
       packages: write
@@ -29,7 +58,35 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # Build once into the local daemon so Trivy scans the exact image that will be
+      # published. The push step below reuses these cached layers.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: ${{ matrix.node }}
+          load: true
+          push: false
+          tags: fleet-${{ matrix.node }}:scan
+          platforms: linux/amd64
+          cache-from: type=gha,scope=fleet-${{ matrix.node }}
+          cache-to: type=gha,mode=max,scope=fleet-${{ matrix.node }}
+
+      - name: Scan image (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: fleet-${{ matrix.node }}:scan
+          severity: ${{ env.TRIVY_SEVERITY }}
+          exit-code: "1"
+          trivyignores: .trivyignore
+          # PEM material in bundled JSON placeholder; TLS not used for this image path
+          # (see Dockerfile -> /etc/tls_certificates.json).
+          skip-files: /etc/tls_certificates.json
+
       - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -38,6 +95,7 @@ jobs:
 
       - name: Image metadata
         id: meta
+        if: github.event_name != 'pull_request'
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/${{ matrix.node }}
@@ -47,7 +105,9 @@ jobs:
             type=sha,format=short
             type=semver,pattern={{version}},enable=${{ github.event_name == 'release' }}
 
-      - name: Build and push
+      # Reuses the layers built above (cache hit), so this only assembles and pushes.
+      - name: Push image
+        if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -56,5 +116,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
           cache-from: type=gha,scope=fleet-${{ matrix.node }}
           cache-to: type=gha,mode=max,scope=fleet-${{ matrix.node }}
