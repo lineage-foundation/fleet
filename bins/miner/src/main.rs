@@ -460,14 +460,10 @@ fn load_settings(matches: &clap::ArgMatches) -> (config::Config, Option<config::
         settings = rebuild(settings, |b| Ok(b.set_override("miner_db_mode", db_mode.clone())?));
     }
 
-    let mut has_user_settings = false;
-
-    if let Some(idx) = matches.value_of("with_user_index") {
-        user_index = idx.parse::<usize>().unwrap();
-        let db_mode = settings.get_table("miner_db_mode").unwrap();
-        settings = rebuild(settings, |b| Ok(b.set_override("user_db_mode", db_mode)?));
-        has_user_settings = true;
-    } else if let Some(address) = matches.value_of("with_user_address") {
+    // Couple a user node (which carries the miner's wallet and its transaction API) by
+    // default. `--with_user_address` selects it by address; otherwise
+    // `--with_user_index` / `WITH_USER_INDEX` selects the config index, defaulting to 0.
+    if let Some(address) = matches.value_of("with_user_address") {
         let mut user_nodes = node_addresses(&settings, "user_nodes");
 
         user_index = match user_nodes.iter().position(|a| a == address) {
@@ -477,10 +473,17 @@ fn load_settings(matches: &clap::ArgMatches) -> (config::Config, Option<config::
                 user_nodes.len() - 1
             }
         };
-        has_user_settings = true;
+    } else {
+        user_index = matches
+            .value_of("with_user_index")
+            .unwrap_or("0")
+            .parse::<usize>()
+            .unwrap();
+        let db_mode = settings.get_table("miner_db_mode").unwrap();
+        settings = rebuild(settings, |b| Ok(b.set_override("user_db_mode", db_mode)?));
     }
 
-    if has_user_settings {
+    {
         let user_nodes = node_addresses(&settings, "user_nodes");
         let addr = user_nodes
             .get(user_index)
@@ -548,7 +551,7 @@ fn load_settings(matches: &clap::ArgMatches) -> (config::Config, Option<config::
         });
     }
 
-    let user_settings = has_user_settings.then(|| settings.clone());
+    let user_settings = Some(settings.clone());
     (settings, user_settings)
 }
 
