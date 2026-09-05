@@ -20,6 +20,12 @@ pub struct TestTlsSpec {
 }
 
 impl TestTlsSpec {
+    /// Whether this spec carries any private keys, i.e. whether a TLS-enabled API server can
+    /// be configured from it. Tests that don't set up TLS material should not request API TLS.
+    pub fn has_private_keys(&self) -> bool {
+        !self.pem_pkcs8_private_keys.is_empty() || !self.pem_pkcs8_private_keys_with_ca.is_empty()
+    }
+
     pub fn make_tls_spec(&self, socket_name_mapping: &BTreeMap<SocketAddr, String>) -> TlsSpec {
         TlsSpec {
             socket_name_mapping: socket_name_mapping.clone(),

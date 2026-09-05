@@ -38,13 +38,13 @@ use tw_chain::primitives::transaction::GenesisTxHashSpec;
 use tw_chain::primitives::{
     asset::{Asset, TokenAmount},
     block::{build_hex_txs_hash, Block, BlockHeader},
-    transaction::{OutPoint, Transaction, TxConstructor, TxIn, TxOut},
+    transaction::{OutPoint, Transaction, TxIn, TxOut},
 };
 use tw_chain::script::{lang::Script, StackEntry};
 use tw_chain::utils::transaction_utils::{
-    construct_address, construct_payment_tx_ins, construct_tx_core, construct_tx_hash,
-    construct_tx_in_signable_asset_hash, construct_tx_in_signable_hash, get_fees_with_out_point,
-    get_tx_out_with_out_point, get_tx_out_with_out_point_cloned,
+    construct_address, construct_tx_core, construct_tx_hash, construct_tx_in_out_signable_hash,
+    construct_tx_in_signable_asset_hash, get_fees_with_out_point, get_tx_out_with_out_point,
+    get_tx_out_with_out_point_cloned,
 };
 use url::Url;
 
@@ -907,24 +907,6 @@ pub fn create_valid_transaction_with_ins_outs(
     amount: TokenAmount,
     address_version: Option<u64>,
 ) -> (String, Transaction) {
-    let tx_ins = {
-        let mut tx_in_cons = Vec::new();
-        for (prev_n, t_hash_hex) in tx_in {
-            let signable = OutPoint::new(t_hash_hex.to_string(), *prev_n);
-            let signable_h = construct_tx_in_signable_hash(&signable);
-
-            let signature = sign::sign_detached(signable_h.as_bytes(), secret_key);
-            tx_in_cons.push(TxConstructor {
-                previous_out: signable,
-                signatures: vec![signature],
-                pub_keys: vec![*pub_key],
-                address_version,
-            });
-        }
-
-        construct_payment_tx_ins(tx_in_cons)
-    };
-
     let tx_outs = {
         let mut tx_outs = Vec::new();
 
@@ -936,6 +918,32 @@ pub fn create_valid_transaction_with_ins_outs(
             });
         }
         tx_outs
+    };
+
+    // Each input is signed over the inputs+outputs hash and carries a P2PKH script, matching
+    // how transactions are validated: `tx_is_valid` verifies the signature against
+    // `construct_tx_in_out_signable_hash`, so the outputs must be known before signing.
+    let tx_ins = {
+        let mut tx_ins = Vec::new();
+        for (prev_n, t_hash_hex) in tx_in {
+            let previous_out = Some(OutPoint::new(t_hash_hex.to_string(), *prev_n));
+            let signable = TxIn {
+                previous_out: previous_out.clone(),
+                script_signature: Script::new(),
+            };
+            let signable_hash = construct_tx_in_out_signable_hash(&signable, &tx_outs);
+            let signature = sign::sign_detached(signable_hash.as_bytes(), secret_key);
+            tx_ins.push(TxIn {
+                previous_out,
+                script_signature: Script::pay2pkh(
+                    signable_hash,
+                    signature,
+                    *pub_key,
+                    address_version,
+                ),
+            });
+        }
+        tx_ins
     };
 
     let payment_tx = construct_tx_core(tx_ins, tx_outs, None);
