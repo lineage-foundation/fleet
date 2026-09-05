@@ -1,0 +1,56 @@
+name: OpenAPI
+
+# Regenerates the canonical OpenAPI document from the API definitions and fails if the
+# committed openapi.json is out of date. Regenerate locally with:
+#   cargo run -p fleet-api --bin dump_openapi > openapi.json
+
+on:
+  pull_request:
+    paths:
+      - "crates/fleet-api/**"
+      - "crates/fleet-core/**"
+      - "crates/fleet-wallet/**"
+      - "openapi.json"
+      - ".github/workflows/openapi.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/fleet-api/**"
+      - "crates/fleet-core/**"
+      - "crates/fleet-wallet/**"
+      - "openapi.json"
+      - ".github/workflows/openapi.yml"
+
+concurrency:
+  group: openapi-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: openapi.json is current
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build dependencies for fleet-core (rocksdb, rug -> gmp/mpfr/mpc), pulled in by fleet-api.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential m4 llvm libclang-dev cmake libgmp-dev libmpfr-dev libmpc-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Regenerate and compare
+        run: |
+          cargo run -p fleet-api --bin dump_openapi > openapi.generated.json
+          if ! diff -u openapi.json openapi.generated.json; then
+            echo "::error::openapi.json is out of date. Regenerate with: cargo run -p fleet-api --bin dump_openapi > openapi.json"
+            exit 1
+          fi
