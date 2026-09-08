@@ -1091,6 +1091,7 @@ async fn init_storage(
         backup_restore: config.backup_restore,
         peer_limit: config.peer_limit,
         activation_height_asert: None,
+        trust_advertised_peer_address: false,
     };
     let info = format!("{} -> {}", name, node_info.node_spec);
     info!("New Storage {}", info);
@@ -1169,6 +1170,7 @@ async fn init_mempool(
         initial_issuances: config.initial_issuances.clone(),
         tx_status_lifetime: 600000,
         activation_height_asert: None,
+        trust_advertised_peer_address: false,
     };
     let info = format!("{} -> {}", name, node_info.node_spec);
     info!("New Mempool {}", info);
