@@ -226,6 +226,11 @@ pub struct MempoolNodeConfig {
     pub tx_status_lifetime: i64,
     /// Activation height for ASERT DAA
     pub activation_height_asert: Option<u64>,
+    /// Identify inbound RAFT peers by their advertised listen address instead of the
+    /// connection's source IP. Needed behind source-NAT (e.g. Railway); defaults off so
+    /// flat-network/local/AWS deployments are unchanged.
+    #[serde(default)]
+    pub trust_advertised_peer_address: bool,
 }
 
 /// Configuration option for a mempool node that can be shared across peers
@@ -276,6 +281,11 @@ pub struct StorageNodeConfig {
     pub peer_limit: usize,
     /// Activation height for ASERT DAA
     pub activation_height_asert: Option<u64>,
+    /// Identify inbound RAFT peers by their advertised listen address instead of the
+    /// connection's source IP. Needed behind source-NAT (e.g. Railway); defaults off so
+    /// flat-network/local/AWS deployments are unchanged.
+    #[serde(default)]
+    pub trust_advertised_peer_address: bool,
 }
 
 /// Configuration option for a storage node
@@ -455,5 +465,110 @@ mod node_list_tests {
                 address: "http://only:1".into()
             }]
         );
+    }
+}
+
+#[cfg(test)]
+mod trust_advertised_peer_address_tests {
+    use super::*;
+
+    fn mempool_config_json(extra: serde_json::Value) -> serde_json::Value {
+        let mut base = serde_json::json!({
+            "mempool_node_idx": 0,
+            "mempool_db_mode": "Live",
+            "tls_config": {
+                "socket_name_mapping": {},
+                "pem_certificates": {},
+                "pem_pkcs8_private_keys": {}
+            },
+            "api_keys": {},
+            "mempool_unicorn_fixed_param": {
+                "modulus": "",
+                "iterations": 1,
+                "security": 1
+            },
+            "mempool_nodes": [],
+            "storage_nodes": [],
+            "user_nodes": [],
+            "mempool_raft": 0,
+            "mempool_api_port": 3002,
+            "mempool_api_use_tls": false,
+            "mempool_raft_tick_timeout": 10,
+            "mempool_mining_event_timeout": 10,
+            "mempool_transaction_timeout": 10,
+            "mempool_seed_utxo": {},
+            "mempool_partition_full_size": 1,
+            "mempool_minimum_miner_pool_len": 1,
+            "jurisdiction": "US",
+            "sanction_list": [],
+            "routes_pow": {},
+            "mempool_miner_whitelist": { "active": false },
+            "peer_limit": 10,
+            "sub_peer_limit": 10,
+            "initial_issuances": [],
+            "tx_status_lifetime": 10
+        });
+        base.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        base
+    }
+
+    fn storage_config_json(extra: serde_json::Value) -> serde_json::Value {
+        let mut base = serde_json::json!({
+            "storage_node_idx": 0,
+            "storage_db_mode": "Live",
+            "tls_config": {
+                "socket_name_mapping": {},
+                "pem_certificates": {},
+                "pem_pkcs8_private_keys": {}
+            },
+            "api_keys": {},
+            "mempool_nodes": [],
+            "storage_nodes": [],
+            "storage_raft": 0,
+            "storage_api_port": 3001,
+            "storage_api_use_tls": false,
+            "storage_raft_tick_timeout": 10,
+            "storage_catchup_duration": 10,
+            "routes_pow": {},
+            "peer_limit": 10
+        });
+        base.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        base
+    }
+
+    #[test]
+    fn mempool_config_defaults_trust_advertised_peer_address_to_false() {
+        let config: MempoolNodeConfig =
+            serde_json::from_value(mempool_config_json(serde_json::json!({}))).unwrap();
+        assert!(!config.trust_advertised_peer_address);
+    }
+
+    #[test]
+    fn mempool_config_honours_explicit_trust_advertised_peer_address() {
+        let config: MempoolNodeConfig = serde_json::from_value(mempool_config_json(
+            serde_json::json!({ "trust_advertised_peer_address": true }),
+        ))
+        .unwrap();
+        assert!(config.trust_advertised_peer_address);
+    }
+
+    #[test]
+    fn storage_config_defaults_trust_advertised_peer_address_to_false() {
+        let config: StorageNodeConfig =
+            serde_json::from_value(storage_config_json(serde_json::json!({}))).unwrap();
+        assert!(!config.trust_advertised_peer_address);
+    }
+
+    #[test]
+    fn storage_config_honours_explicit_trust_advertised_peer_address() {
+        let config: StorageNodeConfig = serde_json::from_value(storage_config_json(
+            serde_json::json!({ "trust_advertised_peer_address": true }),
+        ))
+        .unwrap();
+        assert!(config.trust_advertised_peer_address);
     }
 }
