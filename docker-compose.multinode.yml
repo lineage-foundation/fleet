@@ -1,0 +1,217 @@
+# Local multi-node stack: 3 mempool + 3 storage + 3 miner (each miner runs a coupled user),
+# on the bridge network `lineage`. Each node type forms its own RAFT cluster; mempool[i] is
+# paired with storage[i] by index, and each mempool has a miner attached (mining stalls unless
+# every mempool node has one).
+#
+# Peers connect over the no-TLS path: TLS_CONFIG points at the baked empty-cert config so the
+# baked hostnames need no certificate material. Nodes address each other by docker service name
+# (see .docker/conf/node_settings_multinode.toml), so a restarted peer on a new IP is followed
+# by DNS re-resolution on reconnect.
+#
+# Volumes are PERSISTENT (disk-backed named volumes), so a stopped/restarted node keeps its
+# RocksDB + RAFT log and rejoins by catching up the blocks it missed. The `init-perms` one-shot
+# chowns each volume to the distroless `nonroot` uid (65532) before the nodes start, since a
+# fresh named volume is created root-owned.
+#
+# Run:
+#   docker compose -f docker-compose.multinode.yml up --build
+# Restart one node (keeps its state, then catches up):
+#   docker compose -f docker-compose.multinode.yml restart storage-2
+# Reset all chain state:
+#   docker compose -f docker-compose.multinode.yml down -v
+#
+# Requires Docker Compose v2 / BuildKit. First build can take a long time.
+# Platform defaults to linux/amd64; native ARM: `export FLEET_COMPOSE_PLATFORM=linux/arm64`
+#
+# Host API ports: mempool 3003/3013/3023, storage 3001/3011/3021, miner 3004/3014/3024.
+
+x-node-hardening: &node-hardening
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  init: true
+
+x-node-env: &node-env
+  RUST_LOG: info,debug
+  CONFIG: /etc/node_settings.toml
+  TLS_CONFIG: /etc/tls_certificates_none.json
+
+x-platform: &platform ${FLEET_COMPOSE_PLATFORM:-linux/amd64}
+
+x-dep-init: &dep-init
+  init-perms:
+    condition: service_completed_successfully
+
+services:
+  # One-shot: give every node's persistent volume to the distroless nonroot uid, then exit.
+  init-perms:
+    image: busybox:1.37
+    user: "0:0"
+    command: ["sh", "-c", "chown 65532:65532 /vols/* && echo permissions-initialised"]
+    volumes:
+      - mempool-0-src:/vols/mempool-0
+      - mempool-1-src:/vols/mempool-1
+      - mempool-2-src:/vols/mempool-2
+      - storage-0-src:/vols/storage-0
+      - storage-1-src:/vols/storage-1
+      - storage-2-src:/vols/storage-2
+      - miner-0-src:/vols/miner-0
+      - miner-1-src:/vols/miner-1
+      - miner-2-src:/vols/miner-2
+
+  mempool-0:
+    <<: *node-hardening
+    build: { context: ., dockerfile: Dockerfile, target: mempool }
+    image: fleet-mempool:local
+    platform: *platform
+    command: ["--index=0"]
+    environment: *node-env
+    depends_on: *dep-init
+    ports:
+      - "3003:3003"
+    volumes:
+      - ./.docker/conf/node_settings_multinode.toml:/etc/node_settings.toml:ro
+      - mempool-0-src:/src
+    networks: [lineage]
+
+  mempool-1:
+    <<: *node-hardening
+    build: { context: ., dockerfile: Dockerfile, target: mempool }
+    image: fleet-mempool:local
+    platform: *platform
+    command: ["--index=1"]
+    environment: *node-env
+    depends_on: *dep-init
+    ports:
+      - "3013:3003"
+    volumes:
+      - ./.docker/conf/node_settings_multinode.toml:/etc/node_settings.toml:ro
+      - mempool-1-src:/src
+    networks: [lineage]
+
+  mempool-2:
+    <<: *node-hardening
+    build: { context: ., dockerfile: Dockerfile, target: mempool }
+    image: fleet-mempool:local
+    platform: *platform
+    command: ["--index=2"]
+    environment: *node-env
+    depends_on: *dep-init
+    ports:
+      - "3023:3003"
+    volumes:
+      - ./.docker/conf/node_settings_multinode.toml:/etc/node_settings.toml:ro
+      - mempool-2-src:/src
+    networks: [lineage]
+
+  storage-0:
+    <<: *node-hardening
+    build: { context: ., dockerfile: Dockerfile, target: storage }
+    image: fleet-storage:local
+    platform: *platform
+    command: ["--index=0"]
+    environment: *node-env
+    depends_on: *dep-init
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./.docker/conf/node_settings_multinode.toml:/etc/node_settings.toml:ro
+      - storage-0-src:/src
+    networks: [lineage]
+
+  storage-1:
+    <<: *node-hardening
+    build: { context: ., dockerfile: Dockerfile, target: storage }
+    image: fleet-storage:local
+    platform: *platform
+    command: ["--index=1"]
+    environment: *node-env
+    depends_on: *dep-init
+    ports:
+      - "3011:3001"
+    volumes:
+      - ./.docker/conf/node_settings_multinode.toml:/etc/node_settings.toml:ro
+      - storage-1-src:/src
+    networks: [lineage]
+
+  storage-2:
+    <<: *node-hardening
+    build: { context: ., dockerfile: Dockerfile, target: storage }
+    image: fleet-storage:local
+    platform: *platform
+    command: ["--index=2"]
+    environment: *node-env
+    depends_on: *dep-init
+    ports:
+      - "3021:3001"
+    volumes:
+      - ./.docker/conf/node_settings_multinode.toml:/etc/node_settings.toml:ro
+      - storage-2-src:/src
+    networks: [lineage]
+
+  miner-0:
+    <<: *node-hardening
+    build: { context: ., dockerfile: Dockerfile, target: miner }
+    image: fleet-miner:local
+    platform: *platform
+    command: ["--index=0", "--mempool_index=0"]
+    environment: *node-env
+    depends_on: *dep-init
+    ports:
+      - "3004:3004"
+    volumes:
+      - ./.docker/conf/node_settings_multinode.toml:/etc/node_settings.toml:ro
+      - miner-0-src:/src
+    networks: [lineage]
+
+  miner-1:
+    <<: *node-hardening
+    build: { context: ., dockerfile: Dockerfile, target: miner }
+    image: fleet-miner:local
+    platform: *platform
+    command: ["--index=1", "--mempool_index=1"]
+    environment: *node-env
+    depends_on: *dep-init
+    ports:
+      - "3014:3004"
+    volumes:
+      - ./.docker/conf/node_settings_multinode.toml:/etc/node_settings.toml:ro
+      - miner-1-src:/src
+    networks: [lineage]
+
+  miner-2:
+    <<: *node-hardening
+    build: { context: ., dockerfile: Dockerfile, target: miner }
+    image: fleet-miner:local
+    platform: *platform
+    command: ["--index=2", "--mempool_index=2"]
+    environment: *node-env
+    depends_on: *dep-init
+    ports:
+      - "3024:3004"
+    volumes:
+      - ./.docker/conf/node_settings_multinode.toml:/etc/node_settings.toml:ro
+      - miner-2-src:/src
+    networks: [lineage]
+
+volumes:
+  mempool-0-src:
+  mempool-1-src:
+  mempool-2-src:
+  storage-0-src:
+  storage-1-src:
+  storage-2-src:
+  miner-0-src:
+  miner-1-src:
+  miner-2-src:
+
+networks:
+  lineage:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
