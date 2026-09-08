@@ -180,6 +180,9 @@ pub struct Node {
     /// that has moved to a new address (e.g. after a redeploy) is reached again while the
     /// stable key the rest of the node uses stays unchanged.
     peer_hostnames: Arc<RwLock<HashMap<SocketAddr, String>>>,
+    /// Identify inbound peers by their advertised listen address instead of the
+    /// connection's source IP. Defaults to `false`; opt-in via `set_trust_advertised_peer_address`.
+    trust_advertised_peer_address: Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub(crate) struct Peer {
@@ -294,6 +297,7 @@ impl Node {
             heartbeat_handle: None,
             miner_connection_attempts: Arc::new(RwLock::new(HashMap::new())),
             peer_hostnames: Arc::new(RwLock::new(HashMap::new())),
+            trust_advertised_peer_address: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
 
         if !disable_listening {
@@ -347,6 +351,19 @@ impl Node {
 
     pub fn set_connect_to_handshake_contacts(&mut self, value: bool) {
         self.connect_to_handshake_contacts = value;
+    }
+
+    /// Opt in to identifying inbound peers by their advertised listen address instead of
+    /// the connection's source IP. Not yet consulted anywhere; setting this currently has
+    /// no effect on behaviour.
+    pub fn set_trust_advertised_peer_address(&self, value: bool) {
+        self.trust_advertised_peer_address
+            .store(value, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn trust_advertised_peer_address(&self) -> bool {
+        self.trust_advertised_peer_address
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Handles the listener.

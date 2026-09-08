@@ -178,6 +178,7 @@ impl StorageNode {
             false,
         )
         .await?;
+        node.set_trust_advertised_peer_address(config.trust_advertised_peer_address);
         // Re-resolve storage RAFT siblings' hostnames on reconnect, so a sibling that
         // restarts on a new address is re-dialable while its RAFT key stays stable.
         for (peer_addr, host) in

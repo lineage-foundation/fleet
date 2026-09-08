@@ -148,6 +148,7 @@ impl MempoolNode {
             true,
         )
         .await?;
+        node.set_trust_advertised_peer_address(config.trust_advertised_peer_address);
         // Re-resolve the storage hostname when (re)connecting so the mempool follows the
         // storage node across address changes while sending to a stable key.
         node.register_peer_hostname(storage_addr, raw_storage_addr.address.clone())
