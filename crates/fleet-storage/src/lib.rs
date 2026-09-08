@@ -24,9 +24,9 @@ use fleet_core::raft::RaftCommit;
 use crate::storage_fetch::{FetchStatus, FetchedBlockChain, StorageFetch};
 use crate::storage_raft::{CommittedItem, CompleteBlock, StorageRaft};
 use fleet_core::utils::{
-    construct_valid_block_pow_hash, create_socket_addr, get_genesis_tx_in_display, to_api_keys,
-    to_route_pow_infos, ApiKeys, LocalEvent, LocalEventChannel, LocalEventSender, ResponseResult,
-    RoutesPoWInfo,
+    construct_valid_block_pow_hash, create_socket_addr, get_genesis_tx_in_display,
+    raft_peer_hostnames, to_api_keys, to_route_pow_infos, ApiKeys, LocalEvent, LocalEventChannel,
+    LocalEventSender, ResponseResult, RoutesPoWInfo,
 };
 use bincode::{deserialize, serialize};
 use bytes::Bytes;
@@ -178,6 +178,13 @@ impl StorageNode {
             false,
         )
         .await?;
+        // Re-resolve storage RAFT siblings' hostnames on reconnect, so a sibling that
+        // restarts on a new address is re-dialable while its RAFT key stays stable.
+        for (peer_addr, host) in
+            raft_peer_hostnames(&config.storage_nodes, config.storage_node_idx).await
+        {
+            node.register_peer_hostname(peer_addr, host).await;
+        }
         let node_raft = StorageRaft::new(&config, extra.raft_db.take()).await;
         let catchup_fetch = StorageFetch::new(&config, addr).await;
         let api_pow_info = to_route_pow_infos(config.routes_pow.clone());
