@@ -1045,10 +1045,14 @@ impl Node {
             "peer_out_addr: {:?}, peer_in_addr: {:?}",
             peer_out_addr, peer_in_addr
         );
-        // Derive IP from peer_out_addr; resolved through connection
-        // Use port from peer_in_addr; resolved through handshake data
-        peer_in_addr =
-            canonical_socket_addr(SocketAddr::new(peer_out_addr.ip(), peer_in_addr.port()));
+        // Identify the peer by (source IP + advertised port) by default, or by its
+        // advertised listen address when `trust_advertised_peer_address` is set (needed
+        // where a NAT rewrites the source IP, e.g. Railway private networking).
+        peer_in_addr = inbound_peer_key(
+            self.trust_advertised_peer_address(),
+            peer_out_addr,
+            peer_in_addr,
+        );
         if !self.is_compatible(peer_type, network_version) {
             return Err(CommsError::PeerIncompatible(PeerInfo {
                 node_type: Some(peer_type),
@@ -1434,11 +1438,54 @@ fn take_join_handles<'a>(peers: impl Iterator<Item = &'a mut Peer>) -> Vec<JoinH
         .collect()
 }
 
+/// Compute the peer-map key for an inbound (accepted) connection.
+///
+/// By default the peer is identified by the connection's source IP combined with the
+/// advertised listener port, which assumes the observed source IP is the peer's reachable
+/// address. When `trust_advertised` is set, the peer's advertised listen address is used
+/// as-is instead — required where a NAT rewrites the source IP (e.g. Railway private
+/// networking), so the key matches the address peers actually dial and RAFT messages route.
+fn inbound_peer_key(
+    trust_advertised: bool,
+    peer_out_addr: SocketAddr,
+    peer_in_addr: SocketAddr,
+) -> SocketAddr {
+    if trust_advertised {
+        canonical_socket_addr(peer_in_addr)
+    } else {
+        canonical_socket_addr(SocketAddr::new(peer_out_addr.ip(), peer_in_addr.port()))
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::comms_handler::tls_test_support::get_common_tls_config;
     use std::time::Duration;
+
+    #[test]
+    fn inbound_peer_key_default_uses_source_ip_with_advertised_port() {
+        // Source IP observed on the connection + ephemeral source port.
+        let peer_out_addr: SocketAddr = "203.0.113.9:54321".parse().unwrap();
+        // Listen address the peer advertised in the handshake.
+        let peer_in_addr: SocketAddr = "10.0.0.5:12300".parse().unwrap();
+        // Default: keep the source IP, take the advertised port.
+        assert_eq!(
+            inbound_peer_key(false, peer_out_addr, peer_in_addr),
+            "203.0.113.9:12300".parse::<SocketAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn inbound_peer_key_trust_advertised_uses_advertised_addr() {
+        let peer_out_addr: SocketAddr = "203.0.113.9:54321".parse().unwrap();
+        let peer_in_addr: SocketAddr = "10.0.0.5:12300".parse().unwrap();
+        // Opt-in: use the advertised listen address as-is, ignoring the NAT'd source IP.
+        assert_eq!(
+            inbound_peer_key(true, peer_out_addr, peer_in_addr),
+            "10.0.0.5:12300".parse::<SocketAddr>().unwrap()
+        );
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn handshake_processing() {
