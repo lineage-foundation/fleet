@@ -1,6 +1,6 @@
 use crate::asert::{CompactTarget, CompactTargetError, HeaderHash};
 use crate::comms_handler::Node;
-use crate::configurations::{UnicornFixedInfo, UtxoSetSpec, WalletTxSpec};
+use crate::configurations::{NodeSpec, UnicornFixedInfo, UtxoSetSpec, WalletTxSpec};
 use crate::constants::{
     ADDRESS_POW_NONCE_LEN, BLOCK_PREPEND, COINBASE_MATURITY, D_DISPLAY_PLACES_U64,
     MINING_DIFFICULTY, NETWORK_VERSION, POW_RNUM_SELECT, REWARD_ISSUANCE_VAL, REWARD_SMOOTHING_VAL,
@@ -504,13 +504,24 @@ pub async fn create_socket_addr(url_str: &str) -> Result<SocketAddr, Box<dyn std
                 // Handle as direct IP address
                 Some(SocketAddr::new(ip, port))
             } else {
-                let io_loop = Runtime::new().unwrap();
+                // Handle as domain name. Resolution can fail transiently (e.g. a peer's
+                // hostname is momentarily unresolvable while it restarts); return None so the
+                // caller gets an Err rather than panicking the worker thread on `unwrap`.
+                let io_loop = match Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(_) => return None,
+                };
 
-                // Handle as domain name
-                let resolver = TokioAsyncResolver::tokio_from_system_conf().unwrap();
+                let resolver = match TokioAsyncResolver::tokio_from_system_conf() {
+                    Ok(resolver) => resolver,
+                    Err(_) => return None,
+                };
 
                 let lookup_future = resolver.lookup_ip(host_str);
-                let response = io_loop.block_on(lookup_future).unwrap();
+                let response = match io_loop.block_on(lookup_future) {
+                    Ok(response) => response,
+                    Err(_) => return None,
+                };
                 let ip = match response.iter().next() {
                     Some(ip) => ip,
                     None => return None,
@@ -554,6 +565,26 @@ pub async fn create_socket_addr_for_list(
         result.push(socket_addr);
     }
     Ok(result)
+}
+
+/// Resolve each RAFT sibling's configured hostname to a stable socket address,
+/// excluding this node (`self_idx`). Entries that fail to resolve are skipped,
+/// matching the tolerance of the RAFT peer-list build. Returned pairs are
+/// registered with the comms layer so reconnect dials re-resolve DNS.
+pub async fn raft_peer_hostnames(
+    nodes: &[NodeSpec],
+    self_idx: usize,
+) -> Vec<(std::net::SocketAddr, String)> {
+    let mut pairs = Vec::new();
+    for (idx, spec) in nodes.iter().enumerate() {
+        if idx == self_idx {
+            continue;
+        }
+        if let Ok(addr) = create_socket_addr(&spec.address).await {
+            pairs.push((addr, spec.address.clone()));
+        }
+    }
+    pairs
 }
 
 /// Normalises an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) to the equivalent plain IPv4
@@ -1629,6 +1660,26 @@ mod util_tests {
     use std::net::Ipv4Addr;
 
     #[tokio::test]
+    async fn raft_peer_hostnames_skips_self_and_pairs_addr_with_host() {
+        use crate::configurations::NodeSpec;
+        let nodes = vec![
+            NodeSpec { address: "127.0.0.1:12300".to_string() },
+            NodeSpec { address: "127.0.0.1:12310".to_string() },
+            NodeSpec { address: "127.0.0.1:12320".to_string() },
+        ];
+        let pairs = raft_peer_hostnames(&nodes, 1).await;
+        // self (index 1) is excluded; the other two are paired addr -> host.
+        assert_eq!(pairs.len(), 2);
+        let hosts: Vec<&str> = pairs.iter().map(|(_, h)| h.as_str()).collect();
+        assert!(hosts.contains(&"127.0.0.1:12300"));
+        assert!(hosts.contains(&"127.0.0.1:12320"));
+        // The key is the resolved socket address of that host.
+        for (addr, host) in &pairs {
+            assert_eq!(&addr.to_string(), host);
+        }
+    }
+
+    #[tokio::test]
     /// Tests whether URL strings can be parsed successfully
     async fn test_create_socket_addr() {
         let ip_raw = "0.0.0.0".to_string();
@@ -1659,6 +1710,16 @@ mod util_tests {
             domain_with_port_addr,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 12300)
         );
+    }
+
+    #[tokio::test]
+    /// An unresolvable hostname must yield an Err rather than panicking the calling task:
+    /// the DNS path previously `unwrap`ped the lookup, which could kill a worker thread
+    /// when a peer's hostname was momentarily unresolvable during re-resolution.
+    async fn create_socket_addr_unresolvable_host_returns_err() {
+        // `.invalid` is reserved by RFC 2606 and never resolves.
+        let result = create_socket_addr("http://peer-does-not-exist.invalid:12300").await;
+        assert!(result.is_err());
     }
 
     #[test]
