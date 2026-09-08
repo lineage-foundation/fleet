@@ -122,6 +122,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     cargo build --release --bin miner --features gpu
 
+# Empty template dir copied into the runtime image so the node's data dir (/src) exists
+# owned by the nonroot runtime user — a distroless image has no shell to mkdir/chown it,
+# and nonroot cannot create /src under the root-owned / on a clean filesystem.
+RUN mkdir -p /emptysrc
+
 # Runtime libs absent from distroless/cc (`ldd`-based list on Debian-built `node`).
 # Pulled via apt so transitive deps match distroless/cc-debian13 (trixie).
 FROM debian:trixie-slim@sha256:cedb1ef40439206b673ee8b33a46a03a0c9fa90bf3732f54704f99cb061d2c5a AS runtime-trixie-so
@@ -170,6 +175,11 @@ ENV INITIAL_ISSUANCE=/etc/initial_issuance.json
 ENV API_USE_TLS=0
 ENV MEMPOOL_MINER_WHITELIST=/etc/mempool_miner_whitelist.json
 ENV RUST_LOG=info,debug
+
+# Node data dir (RocksDB under src/db/db, wallet under src/wallet, relative to WORKDIR /),
+# pre-created owned by the nonroot runtime user so the node can write it without a
+# pre-provisioned volume. A volume mounted at /src overrides this at runtime.
+COPY --from=builder --chown=65532:65532 /emptysrc /src
 
 USER nonroot:nonroot
 
