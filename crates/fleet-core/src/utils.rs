@@ -1,6 +1,6 @@
 use crate::asert::{CompactTarget, CompactTargetError, HeaderHash};
 use crate::comms_handler::Node;
-use crate::configurations::{UnicornFixedInfo, UtxoSetSpec, WalletTxSpec};
+use crate::configurations::{NodeSpec, UnicornFixedInfo, UtxoSetSpec, WalletTxSpec};
 use crate::constants::{
     ADDRESS_POW_NONCE_LEN, BLOCK_PREPEND, COINBASE_MATURITY, D_DISPLAY_PLACES_U64,
     MINING_DIFFICULTY, NETWORK_VERSION, POW_RNUM_SELECT, REWARD_ISSUANCE_VAL, REWARD_SMOOTHING_VAL,
@@ -554,6 +554,26 @@ pub async fn create_socket_addr_for_list(
         result.push(socket_addr);
     }
     Ok(result)
+}
+
+/// Resolve each RAFT sibling's configured hostname to a stable socket address,
+/// excluding this node (`self_idx`). Entries that fail to resolve are skipped,
+/// matching the tolerance of the RAFT peer-list build. Returned pairs are
+/// registered with the comms layer so reconnect dials re-resolve DNS.
+pub async fn raft_peer_hostnames(
+    nodes: &[NodeSpec],
+    self_idx: usize,
+) -> Vec<(std::net::SocketAddr, String)> {
+    let mut pairs = Vec::new();
+    for (idx, spec) in nodes.iter().enumerate() {
+        if idx == self_idx {
+            continue;
+        }
+        if let Ok(addr) = create_socket_addr(&spec.address).await {
+            pairs.push((addr, spec.address.clone()));
+        }
+    }
+    pairs
 }
 
 /// Normalises an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) to the equivalent plain IPv4
@@ -1627,6 +1647,26 @@ pub fn all_byte_strings(len: usize) -> impl Iterator<Item = Box<[u8]>> {
 mod util_tests {
     use super::*;
     use std::net::Ipv4Addr;
+
+    #[tokio::test]
+    async fn raft_peer_hostnames_skips_self_and_pairs_addr_with_host() {
+        use crate::configurations::NodeSpec;
+        let nodes = vec![
+            NodeSpec { address: "127.0.0.1:12300".to_string() },
+            NodeSpec { address: "127.0.0.1:12310".to_string() },
+            NodeSpec { address: "127.0.0.1:12320".to_string() },
+        ];
+        let pairs = raft_peer_hostnames(&nodes, 1).await;
+        // self (index 1) is excluded; the other two are paired addr -> host.
+        assert_eq!(pairs.len(), 2);
+        let hosts: Vec<&str> = pairs.iter().map(|(_, h)| h.as_str()).collect();
+        assert!(hosts.contains(&"127.0.0.1:12300"));
+        assert!(hosts.contains(&"127.0.0.1:12320"));
+        // The key is the resolved socket address of that host.
+        for (addr, host) in &pairs {
+            assert_eq!(&addr.to_string(), host);
+        }
+    }
 
     #[tokio::test]
     /// Tests whether URL strings can be parsed successfully
