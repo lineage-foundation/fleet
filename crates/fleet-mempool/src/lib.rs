@@ -22,9 +22,9 @@ use fleet_core::tracked_utxo::TrackedUtxoSet;
 use fleet_core::utils::{
     apply_mining_tx, check_druid_participants, create_item_asset_tx_from_sig, create_socket_addr,
     format_parition_pow_address, generate_pow_random_num, get_timestamp_now,
-    is_timestamp_difference_greater, to_api_keys, to_route_pow_infos, validate_pow_block,
-    validate_pow_for_address, ApiKeys, LocalEvent, LocalEventChannel, LocalEventSender,
-    ResponseResult, RoutesPoWInfo, StringError,
+    is_timestamp_difference_greater, raft_peer_hostnames, to_api_keys, to_route_pow_infos,
+    validate_pow_block, validate_pow_for_address, ApiKeys, LocalEvent, LocalEventChannel,
+    LocalEventSender, ResponseResult, RoutesPoWInfo, StringError,
 };
 use bincode::{deserialize, serialize};
 use bytes::Bytes;
@@ -152,6 +152,13 @@ impl MempoolNode {
         // storage node across address changes while sending to a stable key.
         node.register_peer_hostname(storage_addr, raw_storage_addr.address.clone())
             .await;
+        // Re-resolve mempool RAFT siblings' hostnames on reconnect, so a sibling that
+        // restarts on a new address is re-dialable while its RAFT key stays stable.
+        for (peer_addr, host) in
+            raft_peer_hostnames(&config.mempool_nodes, config.mempool_node_idx).await
+        {
+            node.register_peer_hostname(peer_addr, host).await;
+        }
         let node_raft = MempoolRaft::new(&config, extra.raft_db.take()).await;
 
         if config.backup_restore.unwrap_or(false) {
