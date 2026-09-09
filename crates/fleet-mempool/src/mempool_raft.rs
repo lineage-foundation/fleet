@@ -1041,6 +1041,14 @@ impl MempoolRaft {
         self.consensused.get_winning_miner()
     }
 
+    /// Number of winning PoW entries committed for the current mining phase.
+    /// A growth in this count between watchdog ticks signals forward progress.
+    pub fn get_committed_winning_pow_count(&self) -> usize {
+        self.consensused
+            .block_pipeline
+            .accumulated_winning_pow_count()
+    }
+
     /// The current tx_pool that will be used to generate next block
     /// Returns a BTreeMap reference which contains a String and a Transaction.
     pub fn get_committed_tx_pool(&self) -> &BTreeMap<String, Transaction> {
@@ -2522,7 +2530,6 @@ mod test {
             backup_block_modulo: Default::default(),
             utxo_re_align_block_modulo: Default::default(),
             backup_restore: Default::default(),
-            enable_trigger_messages_pipeline_reset: Default::default(),
             mempool_miner_whitelist: Default::default(),
             peer_limit: 1000,
             sub_peer_limit: 1000,

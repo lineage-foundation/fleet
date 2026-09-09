@@ -654,6 +654,13 @@ impl MiningPipelineInfo {
         &self.winning_pow
     }
 
+    /// Number of winning PoW entries accumulated for the current phase but not
+    /// yet resolved into a winning miner. Used by the mempool progress watchdog
+    /// to treat a newly committed PoW as forward progress.
+    pub fn accumulated_winning_pow_count(&self) -> usize {
+        self.all_winning_pow.len()
+    }
+
     /// Get the mining pipeline status
     pub fn get_mining_pipeline_status(&self) -> &MiningPipelineStatus {
         &self.mining_pipeline_status

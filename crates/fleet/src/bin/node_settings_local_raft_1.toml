@@ -17,7 +17,6 @@ sub_peer_limit = 1
 mempool_mining_event_timeout= 30000
 storage_block_timeout = 30000
 #backup_restore = true
-enable_trigger_messages_pipeline_reset = true
 address_aggregation_limit = 999
 
 [mempool_unicorn_fixed_param]

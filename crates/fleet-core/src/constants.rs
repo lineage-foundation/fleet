@@ -112,8 +112,19 @@ pub const INTERNAL_TX_LIMIT: usize = 999;
 /// Default limit on the number of concurrent API connections per node
 pub const API_CONCURRENCY_LIMIT: usize = 100;
 
-/// Maximum number of attempts to resend trigger messages before proposing to reset the mining pipeline
-pub const RESEND_TRIGGER_MESSAGES_COMPUTE_LIMIT: usize = 5;
+/// Number of consecutive mining-event timeout ticks the pipeline may spend in
+/// `AllItemsIntake` with no observable progress (no committed block, phase
+/// change, or newly committed winning PoW) before the progress watchdog
+/// proposes a last-resort `ResetPipeline`.
+///
+/// The tick interval is `mempool_mining_event_timeout` (30s on testnet), so 10
+/// ticks is roughly five minutes of complete silence. This is deliberately
+/// conservative: disconnected participants are already evicted quickly by the
+/// `MiningParticipantDropped` drop-vote path, and any real progress (including a
+/// single winning PoW) resets the counter, so a healthy-but-slow miner is never
+/// spuriously reset. The watchdog only fires when a round is genuinely wedged
+/// (e.g. a connected participant that never submits PoW).
+pub const POW_PROGRESS_WATCHDOG_TICKS: usize = 10;
 
 /// Limit for the transaction pool per mempool node
 pub const TX_POOL_LIMIT: usize = 10_000_000;

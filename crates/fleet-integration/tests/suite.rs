@@ -2126,19 +2126,18 @@ async fn handle_messages_lost_reset_pipeline_stage() {
     // Arrange
     //
     let mut network_config = complete_network_config_with_n_mempool_raft(11520, 1);
-    // Enable pipeline resets when message retrigger threshold has been reached
-    network_config.enable_pipeline_reset = Some(true);
     network_config.test_duration_divider = 10;
     let mut network = Network::create_from_config(&network_config).await;
 
     let modify_cfg = vec![
         // Miner 1 get's dropped as soon as it's supposed to mine the block
         ("After Winning PoW intake open", CfgModif::Drop("miner1")),
-        // The pipeline status changes back to participant intake after a the threshold
-        // for retrigger messages has been reached
+        // The dropped participant is unreachable, so the re-flood proposes a
+        // `MiningParticipantDropped` vote; a sufficient majority evicts it, the
+        // round drains and the pipeline re-selects back to participant intake.
         (
             "After Winning PoW intake open",
-            CfgModif::HandleEvents(&[("mempool1", "Pipeline reset")]),
+            CfgModif::HandleEvents(&[("mempool1", "Pipeline re-select")]),
         ),
         // After the pipeline status has been reset, the pipeline should be able to
         // accept participants again, so we respawn Miner 1
@@ -5108,7 +5107,6 @@ fn basic_network_config(initial_port: u16) -> NetworkConfig {
         backup_block_modulo: Default::default(),
         utxo_re_align_block_modulo: Default::default(),
         backup_restore: Default::default(),
-        enable_pipeline_reset: Default::default(),
         static_miner_address: Default::default(),
         mempool_miner_whitelist: Default::default(),
         mining_api_key: Default::default(),

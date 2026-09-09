@@ -5,7 +5,7 @@ pub mod mempool_raft;
 use fleet_core::block_pipeline::{MiningPipelineItem, MiningPipelineStatus, Participants};
 use fleet_core::comms_handler::{Event, Node, TcpTlsConfig};
 use fleet_core::configurations::{MempoolNodeConfig, MempoolNodeSharedConfig, TlsPrivateInfo};
-use fleet_core::constants::{DB_PATH, RESEND_TRIGGER_MESSAGES_COMPUTE_LIMIT};
+use fleet_core::constants::{DB_PATH, POW_PROGRESS_WATCHDOG_TICKS};
 use fleet_core::db_utils::{self, SimpleDb, SimpleDbSpec};
 use fleet_core::interfaces::{
     BlockStoredInfo, CommonBlockInfo, Contract, DruidDroplet, DruidPool, InitialIssuance,
@@ -83,8 +83,12 @@ pub struct MempoolNode {
     druid_pool: DruidPool,
     previous_random_num: Vec<u8>,
     current_random_num: Vec<u8>,
-    current_trigger_messages_count: usize,
-    enable_trigger_messages_pipeline_reset: bool,
+    /// Consecutive mining-event timeout ticks spent in `AllItemsIntake` with no
+    /// observable progress. Drives the always-on progress watchdog.
+    no_progress_ticks: usize,
+    /// Count of committed winning PoW entries observed at the last watchdog tick,
+    /// used to detect a newly committed PoW as progress.
+    last_winning_pow_count: usize,
     miners_changed: bool,
     partition_full_size: usize,
     request_list: BTreeSet<SocketAddr>,
@@ -106,6 +110,46 @@ pub struct MempoolNode {
         Node,
     ),
     init_issuances: Vec<InitialIssuance>,
+}
+
+/// Outcome of a single progress-watchdog evaluation during `AllItemsIntake`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WatchdogTick {
+    /// The updated no-progress tick count.
+    ticks: usize,
+    /// Whether a last-resort `ResetPipeline` should be proposed now.
+    reset_pipeline: bool,
+}
+
+/// Pure state transition for the no-progress watchdog.
+///
+/// Given the current consecutive no-progress tick count and whether forward
+/// progress was observed since the last tick, return the next tick count and
+/// whether a last-resort pipeline reset should be proposed.
+///
+/// * Progress resets the counter to `0` and never proposes a reset.
+/// * Otherwise the counter increments; once it would exceed
+///   [`POW_PROGRESS_WATCHDOG_TICKS`] it resets to `0` and signals a reset.
+fn pow_progress_watchdog_tick(no_progress_ticks: usize, made_progress: bool) -> WatchdogTick {
+    if made_progress {
+        return WatchdogTick {
+            ticks: 0,
+            reset_pipeline: false,
+        };
+    }
+
+    let ticks = no_progress_ticks + 1;
+    if ticks > POW_PROGRESS_WATCHDOG_TICKS {
+        WatchdogTick {
+            ticks: 0,
+            reset_pipeline: true,
+        }
+    } else {
+        WatchdogTick {
+            ticks,
+            reset_pipeline: false,
+        }
+    }
 }
 
 impl MempoolNode {
@@ -174,9 +218,6 @@ impl MempoolNode {
 
         let api_pow_info = to_route_pow_infos(config.routes_pow.clone());
         let api_keys = to_api_keys(config.api_keys.clone());
-        let enable_trigger_messages_pipeline_reset = config
-            .enable_trigger_messages_pipeline_reset
-            .unwrap_or(false);
         let api_info = (api_addr, api_tls_info, api_keys, api_pow_info, node.clone());
 
         let shared_config = MempoolNodeSharedConfig {
@@ -205,8 +246,8 @@ impl MempoolNode {
             threaded_calls: Default::default(),
             current_mined_block: None,
             druid_pool: Default::default(),
-            current_trigger_messages_count: Default::default(),
-            enable_trigger_messages_pipeline_reset,
+            no_progress_ticks: Default::default(),
+            last_winning_pow_count: Default::default(),
             previous_random_num: Default::default(),
             current_random_num: Default::default(),
             miner_removal_list: Default::default(),
@@ -933,8 +974,9 @@ impl MempoolNode {
                         self.node_raft.re_propose_uncommitted_current_b_num().await;
                         self.resend_trigger_message().await;
                     } else {
-                        // Reset trigger messages count
-                        self.current_trigger_messages_count = Default::default();
+                        // A fresh mining event was proposed (forward progress), so
+                        // clear the no-progress watchdog.
+                        self.reset_progress_watchdog();
                     }
                 }
                 Some(event) = self.local_events.rx.recv(), if ready => {
@@ -984,25 +1026,35 @@ impl MempoolNode {
                     reason: "Block shutdown".to_owned(),
                 }))
             }
-            Some(CommittedItem::StartPhasePowIntake) => Some(Ok(Response {
-                success: true,
-                reason: "Winning PoW intake open".to_owned(),
-            })),
+            Some(CommittedItem::StartPhasePowIntake) => {
+                self.reset_progress_watchdog();
+                Some(Ok(Response {
+                    success: true,
+                    reason: "Winning PoW intake open".to_owned(),
+                }))
+            }
             Some(CommittedItem::StartPhaseHalted) => {
+                self.reset_progress_watchdog();
                 self.mining_block_mined();
                 Some(Ok(Response {
                     success: true,
                     reason: "Pipeline halted".to_owned(),
                 }))
             }
-            Some(CommittedItem::ResetPipeline) => Some(Ok(Response {
-                success: true,
-                reason: "Pipeline reset".to_owned(),
-            })),
-            Some(CommittedItem::ReSelect) => Some(Ok(Response {
-                success: true,
-                reason: "Pipeline re-select".to_owned(),
-            })),
+            Some(CommittedItem::ResetPipeline) => {
+                self.reset_progress_watchdog();
+                Some(Ok(Response {
+                    success: true,
+                    reason: "Pipeline reset".to_owned(),
+                }))
+            }
+            Some(CommittedItem::ReSelect) => {
+                self.reset_progress_watchdog();
+                Some(Ok(Response {
+                    success: true,
+                    reason: "Pipeline re-select".to_owned(),
+                }))
+            }
             Some(CommittedItem::Transactions) => {
                 delete_local_transactions(
                     &mut self.db,
@@ -1933,10 +1985,19 @@ impl MempoolNode {
 
         self.current_mined_block = None;
         self.node_raft.clear_block_pipeline_proposed_keys();
+        // A block committed: the round advanced, so clear the progress watchdog.
+        self.reset_progress_watchdog();
         // If the node should pause, set the pause node flag to true
         if self.should_pause() {
             *self.pause_node.write().await = true;
         }
+    }
+
+    /// Clear the no-progress watchdog after observing forward pipeline progress
+    /// (a committed block, a phase change, or a newly committed winning PoW).
+    fn reset_progress_watchdog(&mut self) {
+        self.no_progress_ticks = 0;
+        self.last_winning_pow_count = 0;
     }
 
     /// Load and apply the local database to our state
@@ -2140,47 +2201,34 @@ impl MempoolNode {
             }
             MiningPipelineStatus::AllItemsIntake => {
                 info!("Resend block and rand to partition miners");
+                // Re-flooding rand+block also proposes `MiningParticipantDropped`
+                // for any *unreachable* selected participants, so disconnect
+                // recovery is handled by the drop-vote consensus path (a
+                // sufficient majority evicts them and the drained round
+                // re-selects).
                 if let Err(e) = self.flood_rand_and_block_to_partition().await {
                     error!("Resend block and rand to partition miners failed {:?}", e);
                 }
-                if self.enable_trigger_messages_pipeline_reset {
-                    info!("Resend trigger messages for pipeline reset");
-                    let mining_participants = &self.node_raft.get_mining_participants().unsorted;
-                    let disconnected_participants =
-                        self.node.unconnected_peers(mining_participants).await;
 
-                    info!(
-                        "Disconnected participants: {:?}",
-                        disconnected_participants.len()
+                // Always-on progress watchdog: the last-resort backstop for the
+                // case the drop-vote path cannot see — a connected participant
+                // that never submits PoW, or an otherwise stuck round. A newly
+                // committed winning PoW counts as progress and clears the count.
+                let winning_pow_count = self.node_raft.get_committed_winning_pow_count();
+                let made_progress = winning_pow_count > self.last_winning_pow_count;
+                self.last_winning_pow_count = winning_pow_count;
+
+                let tick = pow_progress_watchdog_tick(self.no_progress_ticks, made_progress);
+                self.no_progress_ticks = tick.ticks;
+
+                if tick.reset_pipeline {
+                    warn!(
+                        "No mining progress for {} ticks in AllItemsIntake; proposing pipeline reset",
+                        POW_PROGRESS_WATCHDOG_TICKS
                     );
-
-                    info!("Mining participants: {:?}", mining_participants.len());
-
-                    // If all miners participating in this mining round disconnected
-                    // and we've reached the appropriate threshold for maximum number of
-                    // retries, we need to propose the pipeline revert to participant intake
-                    //
-                    // NB: This vote requires a unanimous_majority vote
-                    //
-                    // TODO: Apply the same logic to any other pipeline stages that might get stuck
-                    if disconnected_participants.len() == mining_participants.len() {
-                        self.current_trigger_messages_count += 1;
-                    }
-
-                    info!(
-                        "Current trigger messages count: {:?}",
-                        self.current_trigger_messages_count
-                    );
-
-                    if self.current_trigger_messages_count >= RESEND_TRIGGER_MESSAGES_COMPUTE_LIMIT
-                    {
-                        self.current_trigger_messages_count = Default::default();
-                        self.node_raft
-                            .propose_mining_pipeline_item(MiningPipelineItem::ResetPipeline)
-                            .await;
-                    }
-                } else {
-                    warn!("Resend trigger messages for pipeline reset is not enabled");
+                    self.node_raft
+                        .propose_mining_pipeline_item(MiningPipelineItem::ResetPipeline)
+                        .await;
                 }
             }
         }
@@ -2642,4 +2690,86 @@ fn delete_local_transactions(db: &mut SimpleDb, keys: &[String]) {
     }
     let batch = batch.done();
     db.write(batch).unwrap();
+}
+
+#[cfg(test)]
+mod progress_watchdog_tests {
+    use super::*;
+
+    /// A no-progress tick increments the counter and does not (yet) reset.
+    #[test]
+    fn increments_on_no_progress_tick() {
+        let tick = pow_progress_watchdog_tick(0, false);
+        assert_eq!(
+            tick,
+            WatchdogTick {
+                ticks: 1,
+                reset_pipeline: false
+            }
+        );
+
+        let tick = pow_progress_watchdog_tick(3, false);
+        assert_eq!(
+            tick,
+            WatchdogTick {
+                ticks: 4,
+                reset_pipeline: false
+            }
+        );
+    }
+
+    /// Observing progress clears the counter and never proposes a reset,
+    /// regardless of how many no-progress ticks had accumulated.
+    #[test]
+    fn resets_on_progress() {
+        for start in [0, 1, POW_PROGRESS_WATCHDOG_TICKS, POW_PROGRESS_WATCHDOG_TICKS + 5] {
+            let tick = pow_progress_watchdog_tick(start, true);
+            assert_eq!(
+                tick,
+                WatchdogTick {
+                    ticks: 0,
+                    reset_pipeline: false
+                },
+                "progress at start={start} must clear the watchdog"
+            );
+        }
+    }
+
+    /// The reset is proposed only once the counter exceeds the bound, and the
+    /// counter is cleared at that point so it does not fire every subsequent tick.
+    #[test]
+    fn proposes_reset_at_the_bound() {
+        // One tick below the bound: increments, no reset.
+        let tick = pow_progress_watchdog_tick(POW_PROGRESS_WATCHDOG_TICKS - 1, false);
+        assert_eq!(
+            tick,
+            WatchdogTick {
+                ticks: POW_PROGRESS_WATCHDOG_TICKS,
+                reset_pipeline: false
+            }
+        );
+
+        // At the bound: the next tick would exceed it -> reset and clear.
+        let tick = pow_progress_watchdog_tick(POW_PROGRESS_WATCHDOG_TICKS, false);
+        assert_eq!(
+            tick,
+            WatchdogTick {
+                ticks: 0,
+                reset_pipeline: true
+            }
+        );
+    }
+
+    /// A healthy round that makes progress every tick never reaches the bound:
+    /// driving many progress ticks keeps the counter pinned at zero.
+    #[test]
+    fn healthy_round_never_trips_watchdog() {
+        let mut ticks = 0usize;
+        for _ in 0..(POW_PROGRESS_WATCHDOG_TICKS * 3) {
+            let tick = pow_progress_watchdog_tick(ticks, true);
+            assert!(!tick.reset_pipeline, "healthy round must never reset");
+            ticks = tick.ticks;
+            assert_eq!(ticks, 0);
+        }
+    }
 }
