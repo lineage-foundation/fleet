@@ -24,7 +24,7 @@ use fleet_core::raft::RaftCommit;
 use crate::storage_fetch::{FetchStatus, FetchedBlockChain, StorageFetch};
 use crate::storage_raft::{CommittedItem, CompleteBlock, StorageRaft};
 use fleet_core::utils::{
-    construct_valid_block_pow_hash, create_socket_addr, get_genesis_tx_in_display,
+    construct_valid_block_pow_hash, create_socket_addr_retry, get_genesis_tx_in_display,
     raft_peer_hostnames, to_api_keys, to_route_pow_infos, ApiKeys, LocalEvent, LocalEventChannel,
     LocalEventSender, ResponseResult, RoutesPoWInfo,
 };
@@ -150,7 +150,7 @@ impl StorageNode {
             .storage_nodes
             .get(config.storage_node_idx)
             .ok_or(StorageError::ConfigError("Invalid storage index"))?;
-        let addr = create_socket_addr(&raw_addr.address)
+        let addr = create_socket_addr_retry(&raw_addr.address)
             .await
             .map_err(|_| StorageError::ConfigError("Invalid storage address supplied"))?;
 
@@ -158,7 +158,7 @@ impl StorageNode {
             .mempool_nodes
             .get(config.storage_node_idx)
             .ok_or(StorageError::ConfigError("Invalid mempool index"))?;
-        let mempool_addr = create_socket_addr(&raw_mempool_addr.address)
+        let mempool_addr = create_socket_addr_retry(&raw_mempool_addr.address)
             .await
             .map_err(|_| StorageError::ConfigError("Invalid mempool address supplied"))?;
 
