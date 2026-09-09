@@ -11,7 +11,11 @@ fleet-core = { path = "../fleet-core" }
 fleet-wallet = { path = "../fleet-wallet" }
 hex = "0.4.2"
 serde = { version = "1.0.104", features = ["derive"] }
-serde_json = "1.0.61"
+# preserve_order: keep struct field declaration order through `serde_json::to_value`
+# in the /v1 handlers, so responses (e.g. OutPoint `{t_hash, n}`) match tw_chain's
+# canonical serialization. Clients sign "what they see" (JSON.stringify of the
+# server response), so alphabetically reordered keys would break signature checks.
+serde_json = { version = "1.0.61", features = ["preserve_order"] }
 tokio = { version = "1.7.1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1.40"
 tw_chain = "1.1.3"
