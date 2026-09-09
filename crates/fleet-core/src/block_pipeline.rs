@@ -457,7 +457,7 @@ impl MiningPipelineInfo {
             }
             (MiningParticipantDropped(addr), AllItemsIntake) => {
                 self.append_dropped_vote(addr, extra.proposer_id);
-                if self.dropped_has_majority(&addr, extra.sufficient_majority) {
+                if self.is_drop_confirmed(&addr) {
                     self.evict_mining_participant(&addr);
                 }
             }
@@ -533,6 +533,27 @@ impl MiningPipelineInfo {
             .get(addr)
             .map(|votes| votes.len() >= sufficient_majority)
             .unwrap_or(false)
+    }
+
+    /// Returns true once a `MiningParticipantDropped` vote for `addr` has been
+    /// committed by its owning proposer — i.e. the drop is confirmed and the
+    /// participant can be evicted.
+    ///
+    /// The threshold is deliberately ONE committed vote, not the sufficient
+    /// majority. Miners are 1:1 with their owning mempool's proposer bucket
+    /// (`participants_mining` is keyed by proposer_id), so only that one mempool
+    /// observes the miner's liveness and can ever propose its drop. No other
+    /// node has the miner in its bucket, so a `MiningParticipantDropped` vote
+    /// can never accumulate more than a single proposer — requiring a
+    /// `sufficient_majority` (e.g. 2 of 3) would be unsatisfiable in a
+    /// multi-mempool cluster and eviction would never fire, wrongly falling
+    /// back to the slow watchdog. The owning mempool is therefore authoritative
+    /// for its own miners: its single committed drop suffices. This remains
+    /// consensus-safe because the vote is a committed RAFT item applied
+    /// deterministically (via `evict_mining_participant`) on every node, so all
+    /// nodes converge on the same participant set — no fork.
+    pub fn is_drop_confirmed(&self, addr: &SocketAddr) -> bool {
+        self.dropped_has_majority(addr, 1)
     }
 
     /// Remove a single mining participant from every `participants_mining`

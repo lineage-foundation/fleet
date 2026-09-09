@@ -4,9 +4,6 @@ use fleet::configurations::{
     MempoolNodeSharedConfig, MinerWhitelist, TxOutSpec, UserAutoGenTxSetup, UtxoSetSpec,
     WalletTxSpec,
 };
-use fleet::block_pipeline::{
-    MiningPipelineInfo, MiningPipelineItem, MiningPipelineStatus, PipelineEventInfo,
-};
 use fleet::constants::{NETWORK_VERSION, SANC_LIST_TEST};
 use fleet::interfaces::{
     BlockStoredInfo, BlockchainItem, BlockchainItemMeta, BlockchainItemType, CommonBlockInfo,
@@ -2343,115 +2340,93 @@ async fn partial_drop_keeps_survivor() {
     test_step_complete(network).await;
 }
 
-/// Fork-guard: eviction is applied deterministically on every mempool node.
+/// Organic multi-node eviction + fast re-select across a 3-mempool RAFT.
 ///
-/// A dropped participant is never evicted from one node's local connection
-/// state; eviction happens only when a committed `MiningParticipantDropped`
-/// vote reaches a sufficient majority, and RAFT replicates the identical commit
-/// log to every node. This test models N mempool nodes each replaying that
-/// SAME committed sequence and asserts they all converge on an identical
-/// mining-participant set (the evicted miner gone on every node, the survivor
-/// kept on every node) — no node forks by evicting differently.
+/// This is the genuine multi-node counterpart to the single-node
+/// `reselect_on_selected_miner_drop`. Each miner registers with exactly one
+/// mempool (1:1 `mempool_to_miner_mapping`), so a selected participant lives in
+/// only that node's proposer bucket and only that node observes its liveness
+/// and can propose its `MiningParticipantDropped` vote. Eviction is therefore
+/// owner-authoritative: a single committed drop vote (threshold 1, NOT the
+/// sufficient majority) evicts the participant — requiring a majority would be
+/// unsatisfiable here because no other node can propose the drop, and recovery
+/// would wrongly fall back to the slow watchdog.
 ///
-/// NOTE: this is asserted at the `handle_mining_pipeline_item` (pipeline-apply)
-/// level rather than through the full multi-mempool network harness. In the
-/// integration harness each miner registers with exactly one mempool (1:1
-/// `mempool_to_miner_mapping`), so a selected participant lives in only one
-/// node's proposer bucket. `mining_participants_to_drop` only proposes dropping
-/// participants in the proposing node's OWN bucket, so a drop-vote for a given
-/// address can never reach a >1 majority organically in a multi-node raft —
-/// making an organically-committed multi-node eviction impossible to stage
-/// there. Replaying the committed log across N pipelines exercises exactly the
-/// deterministic apply that guards against a fork.
-#[tokio::test]
-async fn eviction_deterministic_across_mempool_nodes() {
-    let a: SocketAddr = "127.0.0.1:14001".parse().unwrap();
-    let b: SocketAddr = "127.0.0.1:14002".parse().unwrap();
+/// We reach `AllItemsIntake` with one miner selected in EACH mempool's bucket
+/// (three miners are needed to satisfy the intake quorum — the "miner per
+/// mempool" constraint — but each is still owned 1:1). We then drop every
+/// miner, drive each owning node to organically propose its own drop, and let
+/// RAFT replicate the identical commit log to all nodes. When the last drop
+/// drains the round, every node applies the SAME committed sequence
+/// deterministically and recovers via the fast `"Pipeline re-select"` path
+/// (asserted by `node_all_handle_event` below — a node that instead recovered
+/// via the watchdog `"Pipeline reset"` would panic here). The fork guard is the
+/// final assertion: all nodes converge on an identical (empty) participant set,
+/// with none of the dropped miners present on any node.
+#[tokio::test(flavor = "current_thread")]
+async fn eviction_reselect_organic_across_mempool_nodes() {
+    test_step_start();
 
-    // Three mempool nodes; a drop needs a sufficient majority of 2.
-    const NODES: u64 = 3;
-    const SUFFICIENT_MAJORITY: usize = 2;
+    //
+    // Arrange: 3-mempool RAFT, one miner per mempool. Reach AllItemsIntake with
+    // each miner selected in its owning mempool's bucket.
+    //
+    let mut network_config = complete_network_config_with_n_mempool_raft(11580, 3);
+    network_config.test_duration_divider = 10;
+    let mut network = Network::create_from_config(&network_config).await;
+    let mempool_nodes = network_config.nodes[&NodeType::Mempool].clone();
+    let miner_names = ["miner1", "miner2", "miner3"];
 
-    // Build one node's pipeline, reach AllItemsIntake with a and b selected as
-    // participants proposed across the raft group, then replay the committed
-    // drop votes for `a` from a sufficient majority of proposers.
-    let build_node = || {
-        let mut info = MiningPipelineInfo::default();
-        info.set_committed_mining_block(Block::default(), BTreeMap::new());
-        // Both participants are proposed (and so replicated) by every proposer.
-        for proposer_id in 0..NODES {
-            info.add_to_participants(proposer_id, a);
-            info.add_to_participants(proposer_id, b);
-        }
-        info.start_items_intake(PipelineEventInfo {
-            proposer_id: 0,
-            sufficient_majority: SUFFICIENT_MAJORITY,
-            unanimous_majority: NODES as usize,
-            partition_full_size: 8,
-        });
-        info
-    };
+    create_first_block_act(&mut network).await;
+    proof_of_work_participation_act(&mut network, CfgNum::All, CfgPow::First).await;
 
-    // The committed log every node replays: a sufficient majority of proposers
-    // vote `a` dropped. `b` is never voted on.
-    let committed_votes: Vec<u64> = (0..SUFFICIENT_MAJORITY as u64).collect();
-
-    let mut per_node_sets = Vec::new();
-    let mut per_node_changes = Vec::new();
-    for _node in 0..NODES {
-        let mut info = build_node();
-        assert_eq!(
-            info.get_mining_pipeline_status(),
-            &MiningPipelineStatus::AllItemsIntake,
+    let mut miner_addrs = Vec::new();
+    for name in miner_names {
+        miner_addrs.push(network.get_address(name).await.unwrap());
+    }
+    for mempool in &mempool_nodes {
+        assert!(
+            !mempool_mining_participant_set(&mut network, mempool)
+                .await
+                .is_empty(),
+            "{mempool} should have a selected mining participant before the drop",
         );
+    }
 
-        let mut last_change = None;
-        for proposer_id in &committed_votes {
-            last_change = info
-                .handle_mining_pipeline_item(
-                    MiningPipelineItem::MiningParticipantDropped(a),
-                    PipelineEventInfo {
-                        proposer_id: *proposer_id,
-                        sufficient_majority: SUFFICIENT_MAJORITY,
-                        unanimous_majority: NODES as usize,
-                        partition_full_size: 8,
-                    },
-                )
-                .await;
-        }
+    //
+    // Act: drop every selected miner. Each owning mempool's re-flood organically
+    // proposes its own miner's `MiningParticipantDropped` vote; a single
+    // committed owner vote evicts it, and once the last bucket drains the round
+    // re-selects. Driving every node concurrently replicates the committed log
+    // and asserts they all recover via the fast re-select (NOT the watchdog
+    // "Pipeline reset", which would panic in `node_all_handle_event`).
+    //
+    network
+        .close_loops_and_drop_named(&miner_names.map(String::from))
+        .await;
+    node_all_handle_event(&mut network, &mempool_nodes, &["Pipeline re-select"]).await;
 
-        // Collapse this node's per-proposer buckets into a single view.
-        let mut set = BTreeSet::new();
-        for proposer_id in 0..NODES {
-            set.extend(info.get_mining_participants(proposer_id).iter().copied());
+    //
+    // Assert (fork guard): every node evicted every dropped miner and converged
+    // on an identical (empty) mining-participant set — no node forked.
+    //
+    let mut per_node_sets = Vec::new();
+    for mempool in &mempool_nodes {
+        let set = mempool_mining_participant_set(&mut network, mempool).await;
+        for addr in &miner_addrs {
+            assert!(
+                !set.contains(addr),
+                "{mempool} should have evicted dropped miner {addr}: {set:?}",
+            );
         }
         per_node_sets.push(set);
-        per_node_changes.push(last_change);
     }
-
-    // Every node evicted `a`, kept `b`, and did NOT re-select (partial drop).
-    for (node, set) in per_node_sets.iter().enumerate() {
-        assert!(
-            !set.contains(&a),
-            "node {node} should have evicted the dropped participant: {set:?}",
-        );
-        assert!(
-            set.contains(&b),
-            "node {node} should keep the survivor: {set:?}",
-        );
-    }
-    for (node, change) in per_node_changes.iter().enumerate() {
-        assert_eq!(
-            change, &None,
-            "node {node} should not re-select on a partial drop",
-        );
-    }
-
-    // Fork-guard: all nodes converged on the SAME participant set.
     assert!(
         per_node_sets.windows(2).all(|w| w[0] == w[1]),
         "mempool nodes diverged on the mining-participant set: {per_node_sets:?}",
     );
+
+    test_step_complete(network).await;
 }
 
 /// A connected-but-idle round (a selected participant that stays reachable but
