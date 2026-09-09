@@ -2,7 +2,8 @@ use fleet_core::active_raft::ActiveRaft;
 use fleet_core::asert::calculate_asert_target;
 use fleet_core::block_pipeline::{
     MiningPipelineInfo, MiningPipelineInfoImport, MiningPipelineInfoPreDifficulty,
-    MiningPipelineItem, MiningPipelinePhaseChange, MiningPipelineStatus, Participants,
+    MiningPipelineInfoPreDropped, MiningPipelineItem, MiningPipelinePhaseChange,
+    MiningPipelineStatus, Participants,
     PipelineEventInfo,
 };
 use fleet_core::configurations::{MempoolNodeConfig, MinerWhitelist, UnicornFixedInfo};
@@ -211,6 +212,56 @@ pub struct MempoolConsensused {
     current_issuance: TokenAmount,
     /// The block pipeline
     block_pipeline: MiningPipelineInfo,
+    /// The last mining rewards.
+    last_mining_transaction_hashes: Vec<String>,
+    /// Special handling for processing blocks.
+    special_handling: Option<SpecialHandling>,
+    /// Whitelisted miner nodes.
+    miner_whitelist: MinerWhitelist,
+    /// Timestamp for the current block
+    timestamp: i64,
+    /// Runtime data that does not get stored to disk
+    #[serde(skip)]
+    runtime_data: MempoolConsensusedRuntimeData,
+    /// Initial issuances
+    init_issuances: Vec<InitialIssuance>,
+}
+
+/// This is a dirty patch to enable the import of consensus snapshots
+/// from before the introduction of the mining-participant-dropped vote.
+/// Identical to `MempoolConsensused` except its `block_pipeline` is the
+/// pre-dropped shape.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MempoolConsensusedPreDropped {
+    /// Sufficient majority
+    unanimous_majority: usize,
+    /// Sufficient majority
+    sufficient_majority: usize,
+    /// Number of miners
+    partition_full_size: usize,
+    /// Committed transaction pool.
+    tx_pool: BTreeMap<String, Transaction>,
+    /// Committed DRUID transactions.
+    tx_druid_pool: Vec<BTreeMap<String, Transaction>>,
+    /// Header to use for next block if ready to generate.
+    tx_current_block_previous_hash: Option<String>,
+    /// The very first block to consensus.
+    initial_utxo_txs: Option<BTreeMap<String, Transaction>>,
+    /// UTXO set containing the valid transaction to use as previous input hashes.
+    utxo_set: TrackedUtxoSet,
+    /// Accumulating block:
+    /// Requires majority of mempool node votes for normal blocks.
+    /// Requires unanimous vote for first block.
+    current_block_stored_info: BTreeMap<Vec<u8>, (AccumulatingBlockStoredInfo, BTreeSet<u64>)>,
+    /// Coordinated commands sent through RAFT
+    /// Requires unanimous vote
+    current_raft_coordinated_cmd_stored_info: BTreeMap<CoordinatedCommand, BTreeSet<u64>>,
+    /// The last commited raft index.
+    last_committed_raft_idx_and_term: (u64, u64),
+    /// The current circulation of tokens
+    current_issuance: TokenAmount,
+    /// The block pipeline
+    block_pipeline: MiningPipelineInfoPreDropped,
     /// The last mining rewards.
     last_mining_transaction_hashes: Vec<String>,
     /// Special handling for processing blocks.
@@ -558,26 +609,10 @@ impl MempoolRaft {
             // and whether to patch in the UNICORN fixed parameters too.
             warn!("apply_snapshot called self.consensused updated");
 
-            let consensus_check: Result<MempoolConsensused, _> = try_deserialize(&consensused_ser);
-
             // Handle the case where the snapshot is from a previous version
-            self.consensused = match consensus_check {
-                Ok(consensused) => consensused,
-                Err(e) => {
-                    warn!("Deserialization of consensus snapshot failed: {:?}", e);
-                    warn!("Attempting to deserialize as a previous version");
-
-                    let consensus_prediff: Result<MempoolConsensusedPreDifficulty, _> =
-                        try_deserialize(&consensused_ser);
-                    match consensus_prediff {
-                        Ok(consensused) => consensused.into(),
-                        Err(e) => {
-                            error!("Deserialization of consensus snapshot failed for previous difficulty: {:?}", e);
-                            error!("apply_snapshot deserialize error: {:?}", e);
-                            return None;
-                        }
-                    }
-                }
+            self.consensused = match deserialize_consensused_snapshot(&consensused_ser) {
+                Some(consensused) => consensused,
+                None => return None,
             };
 
             debug!(
@@ -1206,6 +1241,41 @@ impl MempoolRaft {
     }
 }
 
+/// Deserialize a mempool consensus snapshot, falling back through the
+/// historical struct shapes from newest to oldest so that snapshots created by
+/// previous versions still restore.
+///
+/// The order MUST be newest to oldest: full `MempoolConsensused` first, then
+/// `MempoolConsensusedPreDropped`, then `MempoolConsensusedPreDifficulty`.
+/// bincode ignores trailing bytes, so trying an older (shorter) shape first
+/// would silently truncate a newer snapshot.
+fn deserialize_consensused_snapshot(consensused_ser: &[u8]) -> Option<MempoolConsensused> {
+    match try_deserialize::<MempoolConsensused>(consensused_ser) {
+        Ok(consensused) => Some(consensused),
+        Err(e) => {
+            warn!("Deserialization of consensus snapshot failed: {:?}", e);
+            warn!("Attempting to deserialize as a previous version (pre-dropped)");
+
+            match try_deserialize::<MempoolConsensusedPreDropped>(consensused_ser) {
+                Ok(consensused) => Some(consensused.into()),
+                Err(e) => {
+                    warn!("Deserialization as pre-dropped snapshot failed: {:?}", e);
+                    warn!("Attempting to deserialize as a previous version (pre-difficulty)");
+
+                    match try_deserialize::<MempoolConsensusedPreDifficulty>(consensused_ser) {
+                        Ok(consensused) => Some(consensused.into()),
+                        Err(e) => {
+                            error!("Deserialization of consensus snapshot failed for previous difficulty: {:?}", e);
+                            error!("apply_snapshot deserialize error: {:?}", e);
+                            None
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl From<MempoolConsensusedPreDifficulty> for MempoolConsensused {
     fn from(consensused: MempoolConsensusedPreDifficulty) -> Self {
         let MempoolConsensusedPreDifficulty {
@@ -1246,6 +1316,56 @@ impl From<MempoolConsensusedPreDifficulty> for MempoolConsensused {
             last_committed_raft_idx_and_term,
             current_issuance,
             block_pipeline: post_diff_block_pipeline,
+            last_mining_transaction_hashes,
+            runtime_data,
+            special_handling,
+            miner_whitelist,
+            timestamp,
+            init_issuances,
+        }
+    }
+}
+
+impl From<MempoolConsensusedPreDropped> for MempoolConsensused {
+    fn from(consensused: MempoolConsensusedPreDropped) -> Self {
+        let MempoolConsensusedPreDropped {
+            unanimous_majority,
+            sufficient_majority,
+            partition_full_size,
+            tx_pool,
+            tx_druid_pool,
+            tx_current_block_previous_hash,
+            initial_utxo_txs,
+            utxo_set,
+            current_block_stored_info,
+            current_raft_coordinated_cmd_stored_info,
+            last_committed_raft_idx_and_term,
+            current_issuance,
+            last_mining_transaction_hashes,
+            runtime_data,
+            special_handling,
+            miner_whitelist,
+            timestamp,
+            init_issuances,
+            block_pipeline,
+        } = consensused;
+
+        let post_dropped_block_pipeline: MiningPipelineInfo = block_pipeline.into();
+
+        Self {
+            unanimous_majority,
+            sufficient_majority,
+            partition_full_size,
+            tx_pool,
+            tx_druid_pool,
+            tx_current_block_previous_hash,
+            initial_utxo_txs,
+            utxo_set,
+            current_block_stored_info,
+            current_raft_coordinated_cmd_stored_info,
+            last_committed_raft_idx_and_term,
+            current_issuance,
+            block_pipeline: post_dropped_block_pipeline,
             last_mining_transaction_hashes,
             runtime_data,
             special_handling,
@@ -1952,6 +2072,46 @@ mod test {
     use tw_chain::crypto::sign_ed25519 as sign;
     use tw_chain::primitives::asset::TokenAmount;
 
+    #[test]
+    fn snapshot_pre_dropped_restores_with_empty_dropped_votes() {
+        // A snapshot produced before the mining-participant-dropped vote must
+        // still restore, defaulting the new field to empty.
+        let pre = MempoolConsensusedPreDropped {
+            partition_full_size: 5,
+            last_mining_transaction_hashes: vec!["deadbeef".to_string()],
+            ..Default::default()
+        };
+
+        let ser = serialize(&pre).unwrap();
+        let restored = deserialize_consensused_snapshot(&ser).expect("must restore");
+
+        // Fields carried through the correct (pre-dropped) fallback branch.
+        assert_eq!(restored.partition_full_size, 5);
+        assert_eq!(
+            restored.last_mining_transaction_hashes,
+            vec!["deadbeef".to_string()]
+        );
+        // New field defaulted empty: no address has any recorded dropped votes.
+        let addr: SocketAddr = "127.0.0.1:1000".parse().unwrap();
+        assert!(!restored.block_pipeline.dropped_has_majority(&addr, 1));
+    }
+
+    #[test]
+    fn snapshot_full_round_trips_preserving_dropped_votes() {
+        let addr: SocketAddr = "127.0.0.1:1000".parse().unwrap();
+
+        let mut consensused = MempoolConsensused::default();
+        consensused.block_pipeline.append_dropped_vote(addr, 1);
+        consensused.block_pipeline.append_dropped_vote(addr, 2);
+
+        let ser = serialize(&consensused).unwrap();
+        let restored = deserialize_consensused_snapshot(&ser).expect("must restore");
+
+        // The dropped-vote state survives a full round-trip.
+        assert!(restored.block_pipeline.dropped_has_majority(&addr, 2));
+        assert!(!restored.block_pipeline.dropped_has_majority(&addr, 3));
+    }
+
     #[tokio::test]
     async fn generate_first_block_no_raft() {
         //
@@ -2278,6 +2438,7 @@ mod test {
             initial_issuances: Default::default(),
             tx_status_lifetime: 600000,
             activation_height_asert: None,
+            trust_advertised_peer_address: false,
         };
         let mut node = MempoolRaft::new(&mempool_config, Default::default()).await;
         node.set_key_run(0);
