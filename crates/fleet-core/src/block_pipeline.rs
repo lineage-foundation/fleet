@@ -29,6 +29,7 @@ pub enum MiningPipelinePhaseChange {
     StartPhasePowIntake,
     StartPhaseHalted,
     Reset,
+    ReSelect,
 }
 
 /// Different types of items that can be proposed to the block pipeline
@@ -454,6 +455,12 @@ impl MiningPipelineInfo {
             (CompleteMining, AllItemsIntake) => {
                 self.append_current_phase_timeout(extra.proposer_id);
             }
+            (MiningParticipantDropped(addr), AllItemsIntake) => {
+                self.append_dropped_vote(addr, extra.proposer_id);
+                if self.dropped_has_majority(&addr, extra.sufficient_majority) {
+                    self.evict_mining_participant(&addr);
+                }
+            }
             (ResetPipeline, _) => {
                 self.append_reset_pipeline_timeout(extra.proposer_id);
             }
@@ -479,6 +486,12 @@ impl MiningPipelineInfo {
                 }
             }
             AllItemsIntake => {
+                // A committed drop can drain every remaining participant: reopen
+                // intake and re-select rather than mine an empty round.
+                if self.round_is_drained() {
+                    self.reset_to_intake(extra);
+                    return Some(MiningPipelinePhaseChange::ReSelect);
+                }
                 if self.has_ready_select_winning_miner(extra.sufficient_majority) {
                     self.start_winning_pow_halted();
                     return Some(MiningPipelinePhaseChange::StartPhaseHalted);
@@ -569,10 +582,18 @@ impl MiningPipelineInfo {
         self.proposed_keys.insert(key);
     }
 
-    pub fn handle_reset_pipeline(
-        &mut self,
-        extra: PipelineEventInfo,
-    ) -> Option<MiningPipelinePhaseChange> {
+    /// Returns true when no mining participants remain across all
+    /// `participants_mining` buckets.
+    pub fn round_is_drained(&self) -> bool {
+        self.participants_mining
+            .values()
+            .all(|p| p.unsorted.is_empty())
+    }
+
+    /// Clear the per-phase vote/participant state and reopen participant intake,
+    /// preserving the consensused `current_block`/`current_block_tx`. Shared by
+    /// the reset and re-select transitions.
+    fn reset_to_intake(&mut self, extra: PipelineEventInfo) {
         self.current_phase_timeout_peer_ids = Default::default();
         self.current_phase_reset_pipeline_peer_ids = Default::default();
         self.current_phase_dropped_peer_ids = Default::default();
@@ -580,8 +601,14 @@ impl MiningPipelineInfo {
         // Clear participants intake
         self.participants_intake = Default::default();
         self.participants_mining = Default::default();
-        self.current_phase_timeout_peer_ids = Default::default();
         self.start_items_intake(extra);
+    }
+
+    pub fn handle_reset_pipeline(
+        &mut self,
+        extra: PipelineEventInfo,
+    ) -> Option<MiningPipelinePhaseChange> {
+        self.reset_to_intake(extra);
         Some(MiningPipelinePhaseChange::Reset)
     }
 

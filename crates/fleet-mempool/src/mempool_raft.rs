@@ -84,6 +84,7 @@ pub enum CommittedItem {
     StartPhasePowIntake,
     StartPhaseHalted,
     ResetPipeline,
+    ReSelect,
     Transactions,
     Snapshot,
     CoordinatedCmd(CoordinatedCommand),
@@ -96,6 +97,7 @@ impl From<MiningPipelinePhaseChange> for CommittedItem {
             StartPhasePowIntake => CommittedItem::StartPhasePowIntake,
             StartPhaseHalted => CommittedItem::StartPhaseHalted,
             Reset => CommittedItem::ResetPipeline,
+            ReSelect => CommittedItem::ReSelect,
         }
     }
 }
@@ -738,7 +740,8 @@ impl MempoolRaft {
                         self.set_next_propose_mining_event_timeout_at();
                         return Some(v.into());
                     }
-                    Some(v @ MiningPipelinePhaseChange::Reset) => {
+                    Some(v @ MiningPipelinePhaseChange::Reset)
+                    | Some(v @ MiningPipelinePhaseChange::ReSelect) => {
                         let proposed_block_pipeline_keys =
                             self.consensused.block_pipeline.get_proposed_keys();
                         self.proposed_in_flight
@@ -2304,6 +2307,93 @@ mod test {
         assert_eq!(node.consensused.tx_pool.len(), 0);
         assert_eq!(node.consensused.tx_druid_pool.len(), 0);
         assert_eq!(node.consensused.tx_current_block_previous_hash, None);
+    }
+
+    #[tokio::test]
+    async fn reselect_when_sole_participant_dropped() {
+        //
+        // Arrange: reach AllItemsIntake with a single mining participant.
+        //
+        let a: SocketAddr = "127.0.0.1:13000".parse().unwrap();
+
+        let mut info = MiningPipelineInfo::default();
+        info.set_committed_mining_block(Block::default(), BTreeMap::new());
+        info.add_to_participants(0, a);
+
+        let extra = PipelineEventInfo {
+            proposer_id: 0,
+            sufficient_majority: 1,
+            unanimous_majority: 2,
+            partition_full_size: 8,
+        };
+        info.start_items_intake(extra.clone());
+        assert_eq!(
+            info.get_mining_pipeline_status(),
+            &MiningPipelineStatus::AllItemsIntake
+        );
+
+        //
+        // Act: a sufficient majority of proposers vote the sole miner dropped.
+        //
+        let change = info
+            .handle_mining_pipeline_item(MiningPipelineItem::MiningParticipantDropped(a), extra)
+            .await;
+
+        //
+        // Assert: the drained round re-selects, preserving the committed block.
+        //
+        assert_eq!(change, Some(MiningPipelinePhaseChange::ReSelect));
+        assert_eq!(
+            info.get_mining_pipeline_status(),
+            &MiningPipelineStatus::ParticipantOnlyIntake
+        );
+        assert_eq!(info.get_mining_participants(0).len(), 0);
+        assert!(info.get_mining_block().is_some());
+    }
+
+    #[tokio::test]
+    async fn partial_drop_keeps_survivor() {
+        //
+        // Arrange: reach AllItemsIntake with two mining participants.
+        //
+        let a: SocketAddr = "127.0.0.1:13001".parse().unwrap();
+        let b: SocketAddr = "127.0.0.1:13002".parse().unwrap();
+
+        let mut info = MiningPipelineInfo::default();
+        info.set_committed_mining_block(Block::default(), BTreeMap::new());
+        info.add_to_participants(0, a);
+        info.add_to_participants(0, b);
+
+        let extra = PipelineEventInfo {
+            proposer_id: 0,
+            sufficient_majority: 1,
+            unanimous_majority: 2,
+            partition_full_size: 8,
+        };
+        info.start_items_intake(extra.clone());
+        assert_eq!(
+            info.get_mining_pipeline_status(),
+            &MiningPipelineStatus::AllItemsIntake
+        );
+
+        //
+        // Act: a majority drop for one participant only.
+        //
+        let change = info
+            .handle_mining_pipeline_item(MiningPipelineItem::MiningParticipantDropped(a), extra)
+            .await;
+
+        //
+        // Assert: no re-select; the survivor remains in the round.
+        //
+        assert_eq!(change, None);
+        assert_eq!(
+            info.get_mining_pipeline_status(),
+            &MiningPipelineStatus::AllItemsIntake
+        );
+        let participants = info.get_mining_participants(0);
+        assert!(!participants.contains(&a));
+        assert!(participants.contains(&b));
     }
 
     #[tokio::test]

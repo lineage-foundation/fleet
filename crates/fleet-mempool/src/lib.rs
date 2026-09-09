@@ -999,6 +999,10 @@ impl MempoolNode {
                 success: true,
                 reason: "Pipeline reset".to_owned(),
             })),
+            Some(CommittedItem::ReSelect) => Some(Ok(Response {
+                success: true,
+                reason: "Pipeline re-select".to_owned(),
+            })),
             Some(CommittedItem::Transactions) => {
                 delete_local_transactions(
                     &mut self.db,
