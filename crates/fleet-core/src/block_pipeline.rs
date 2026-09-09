@@ -507,30 +507,6 @@ impl MiningPipelineInfo {
         self.proposed_keys = Default::default();
     }
 
-    /// Cleanup all inactive participants from pipeline
-    pub fn cleanup_participant_intake(&mut self, inactive_miners: &[SocketAddr]) {
-        for (_, participants) in self.participants_intake.iter_mut() {
-            participants
-                .unsorted
-                .retain(|addr| !inactive_miners.contains(addr));
-            participants
-                .lookup
-                .retain(|addr| !inactive_miners.contains(addr));
-        }
-    }
-
-    /// Cleanup all inactive mining participants from pipeline
-    pub fn cleanup_participants_mining(&mut self, inactive_miners: &[SocketAddr]) {
-        for (_, participants) in self.participants_mining.iter_mut() {
-            participants
-                .unsorted
-                .retain(|addr| !inactive_miners.contains(addr));
-            participants
-                .lookup
-                .retain(|addr| !inactive_miners.contains(addr));
-        }
-    }
-
     /// Record a vote from `proposer_id` that the selected miner `addr` has
     /// dropped from the current mining phase.
     ///
@@ -570,6 +546,33 @@ impl MiningPipelineInfo {
             participants.unsorted.retain(|a| a != addr);
             participants.lookup.remove(addr);
         }
+    }
+
+    /// Given locally-detected unreachable miner addresses, return the subset
+    /// that are *currently selected* mining participants for `proposer_id`,
+    /// deduplicated and preserving the order of `unreachable`.
+    ///
+    /// These are the only addresses whose committed mining state may be
+    /// evicted, and even then only via a committed `MiningParticipantDropped`
+    /// vote (see `handle_mining_pipeline_item`) — never by local mutation.
+    /// Outside `AllItemsIntake` the mining set is empty, so intake-pool /
+    /// request-list peers never appear here; they are pruned only from
+    /// per-node flood bookkeeping.
+    ///
+    /// Pure read: this never mutates any participant state.
+    pub fn mining_participants_to_drop(
+        &self,
+        proposer_id: u64,
+        unreachable: &[SocketAddr],
+    ) -> Vec<SocketAddr> {
+        let participants = self.get_mining_participants(proposer_id);
+        let mut seen = BTreeSet::new();
+        unreachable
+            .iter()
+            .copied()
+            .filter(|addr| participants.contains(addr))
+            .filter(|addr| seen.insert(*addr))
+            .collect()
     }
 
     /// Get proposed RaftContextKey set
@@ -955,6 +958,51 @@ mod tests {
         info.evict_mining_participant(&b);
         assert_eq!(info.participants_mining.get(&1).unwrap().len(), 2);
         assert_eq!(info.participants_mining.get(&2).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn mining_participants_to_drop_returns_intersection_deduped_without_mutating() {
+        let mut info = MiningPipelineInfo::default();
+        let a = addr(1000);
+        let b = addr(1001);
+        let c = addr(1002);
+        let intake_only = addr(2000);
+        let not_selected = addr(3000);
+
+        info.participants_mining
+            .insert(1, participants_with(&[a, b, c]));
+        // An intake-pool peer must never be considered for a consensus drop.
+        info.participants_intake
+            .insert(1, participants_with(&[intake_only]));
+
+        let mining_before = info.participants_mining.clone();
+        let intake_before = info.participants_intake.clone();
+
+        // Unreachable set contains: two selected participants (with a duplicate),
+        // an intake-only peer, and an address that is not tracked at all.
+        let unreachable = [a, not_selected, b, intake_only, a];
+        let drops = info.mining_participants_to_drop(1, &unreachable);
+
+        // Only currently-selected mining participants, deduped, in input order.
+        assert_eq!(drops, vec![a, b]);
+
+        // The local decision is a pure read: committed participant state is
+        // untouched. Eviction happens only through the committed vote path.
+        assert_eq!(info.participants_mining, mining_before);
+        assert_eq!(info.participants_intake, intake_before);
+    }
+
+    #[test]
+    fn mining_participants_to_drop_empty_outside_all_items_intake() {
+        // Outside AllItemsIntake there are no selected mining participants for
+        // this proposer, so no unreachable peer (intake-pool or request-list)
+        // may trigger a consensus drop.
+        let info = MiningPipelineInfo::default();
+        let unreachable = [addr(1000), addr(1001)];
+
+        assert!(info
+            .mining_participants_to_drop(0, &unreachable)
+            .is_empty());
     }
 
     #[test]

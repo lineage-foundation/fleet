@@ -903,14 +903,15 @@ impl MempoolRaft {
         self.consensused.block_pipeline.clear_proposed_keys();
     }
 
-    /// Flush disconnected miners from mempool node
-    pub fn flush_stale_miners(&mut self, unsent_miners: &[SocketAddr]) {
+    /// Locally-detected unreachable miners that are currently-selected mining
+    /// participants for this node, and must therefore be evicted through a
+    /// committed `MiningParticipantDropped` vote rather than by local mutation
+    /// of the RAFT-replicated participant sets.
+    pub fn mining_participants_to_drop(&self, unreachable: &[SocketAddr]) -> Vec<SocketAddr> {
+        let proposer_id = self.raft_active.peer_id();
         self.consensused
             .block_pipeline
-            .cleanup_participant_intake(unsent_miners);
-        self.consensused
-            .block_pipeline
-            .cleanup_participants_mining(unsent_miners);
+            .mining_participants_to_drop(proposer_id, unreachable)
     }
 
     /// Propose to pause nodes

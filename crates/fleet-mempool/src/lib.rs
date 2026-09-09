@@ -1745,6 +1745,24 @@ impl MempoolNode {
 
         if !unsent_miners.is_empty() || !miner_removal_list.is_empty() {
             unsent_miners.extend(miner_removal_list);
+
+            // Unreachability is detected locally, but eviction of committed
+            // mining participant state is a consensus action: propose a
+            // `MiningParticipantDropped` vote for every unreachable address that
+            // is a currently-selected mining participant (including admin
+            // removals of a selected miner). Repeat proposals for the same
+            // (addr, b_num) are deduplicated by `propose_mining_pipeline_item`,
+            // so flooding every tick does not spam the RAFT log. Intake-pool /
+            // request-list peers are not selected participants and so are only
+            // pruned from local flood bookkeeping below.
+            for addr in self.node_raft.mining_participants_to_drop(&unsent_miners) {
+                self.node_raft
+                    .propose_mining_pipeline_item(MiningPipelineItem::MiningParticipantDropped(
+                        addr,
+                    ))
+                    .await;
+            }
+
             self.flush_stale_miners(unsent_miners.clone());
             self.miner_removal_list.write().await.clear();
             self.node_raft
@@ -1793,10 +1811,19 @@ impl MempoolNode {
         Some(miners_to_remove)
     }
 
+    /// Prune stale miners from this node's LOCAL flood bookkeeping only.
+    ///
+    /// This intentionally does NOT touch the RAFT-replicated participant sets
+    /// (`participants_intake` / `participants_mining`): mutating them from this
+    /// connection-driven, per-node path would let different mempool nodes prune
+    /// different miners and diverge on `WinningPoW` commit. Eviction of a
+    /// selected mining participant happens only through the committed
+    /// `MiningParticipantDropped` vote path (see
+    /// `flood_rand_and_block_to_partition`).
     pub fn flush_stale_miners(&mut self, stale_miners: Vec<SocketAddr>) {
-        trace!("Flushing stale miners from mining pipeline and request list {stale_miners:?}");
+        trace!("Flushing stale miners from local request list {stale_miners:?}");
 
-        // Flush stale miners
+        // Flush stale miners from the local request list
         self.request_list
             .retain(|addr| !stale_miners.contains(addr));
 
@@ -1809,8 +1836,6 @@ impl MempoolNode {
             error!("Error writing updated miner request list to disk: {e:?}");
         }
 
-        // Cleanup miners from block pipeline
-        self.node_raft.flush_stale_miners(&stale_miners);
         self.miners_changed = true;
     }
 
