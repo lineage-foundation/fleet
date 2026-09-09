@@ -16,7 +16,7 @@ use fleet_core::raft_util::{RaftContextKey, RaftInFlightProposals};
 use fleet_core::tracked_utxo::TrackedUtxoSet;
 use fleet_core::unicorn::{UnicornFixedParam, UnicornInfo};
 use fleet_core::utils::{
-    calculate_reward, construct_coinbase_tx, create_socket_addr_for_list, get_timestamp_now,
+    calculate_reward, construct_coinbase_tx, create_socket_addr_for_list_retry, get_timestamp_now,
     get_total_coinbase_tokens, make_utxo_set_from_seed, try_deserialize, BackupCheck,
     UtxoReAlignCheck,
 };
@@ -316,9 +316,11 @@ impl MempoolRaft {
             .collect::<Vec<String>>();
         let raft_active = ActiveRaft::new(
             config.mempool_node_idx,
-            &create_socket_addr_for_list(&raw_node_ips)
+            &create_socket_addr_for_list_retry(&raw_node_ips)
                 .await
-                .unwrap_or_default(),
+                .unwrap_or_else(|e| {
+                    panic!("Failed to resolve mempool RAFT peer addresses after retries: {e}")
+                }),
             use_raft,
             Duration::from_millis(config.mempool_raft_tick_timeout as u64),
             db_utils::new_db(config.mempool_db_mode, &DB_SPEC, raft_db, None),

@@ -20,7 +20,7 @@ use fleet_core::raft::RaftCommit;
 use fleet_core::threaded_call::{ThreadedCallChannel, ThreadedCallSender};
 use fleet_core::tracked_utxo::TrackedUtxoSet;
 use fleet_core::utils::{
-    apply_mining_tx, check_druid_participants, create_item_asset_tx_from_sig, create_socket_addr,
+    apply_mining_tx, check_druid_participants, create_item_asset_tx_from_sig, create_socket_addr_retry,
     format_parition_pow_address, generate_pow_random_num, get_timestamp_now,
     is_timestamp_difference_greater, raft_peer_hostnames, to_api_keys, to_route_pow_infos,
     validate_pow_block, validate_pow_for_address, ApiKeys, LocalEvent, LocalEventChannel,
@@ -118,7 +118,7 @@ impl MempoolNode {
             .mempool_nodes
             .get(config.mempool_node_idx)
             .ok_or(MempoolError::ConfigError("Invalid mempool index"))?;
-        let addr = create_socket_addr(&raw_addr.address).await.map_err(|_| {
+        let addr = create_socket_addr_retry(&raw_addr.address).await.map_err(|_| {
             MempoolError::ConfigError("Invalid mempool node address in config file")
         })?;
 
@@ -127,7 +127,7 @@ impl MempoolNode {
             .storage_nodes
             .get(config.mempool_node_idx)
             .ok_or(MempoolError::ConfigError("Invalid storage index"))?;
-        let storage_addr = create_socket_addr(&raw_storage_addr.address)
+        let storage_addr = create_socket_addr_retry(&raw_storage_addr.address)
             .await
             .map_err(|_| {
                 MempoolError::ConfigError("Invalid storage node address in config file")

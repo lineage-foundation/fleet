@@ -567,6 +567,68 @@ pub async fn create_socket_addr_for_list(
     Ok(result)
 }
 
+/// Retry budget for resolving peer addresses at startup. On a dynamic-DNS network a
+/// peer's hostname only becomes resolvable once its container is scheduled, so a node
+/// (re)started for maintenance must retry rather than fail immediately and crash.
+const PEER_RESOLVE_MAX_ATTEMPTS: usize = 60;
+const PEER_RESOLVE_BACKOFF: Duration = Duration::from_secs(2);
+
+/// Run a fallible async operation, retrying with a fixed backoff until it succeeds or
+/// the attempt budget is exhausted. Returns the last error on exhaustion.
+pub async fn retry_with_backoff<T, E, F, Fut>(
+    max_attempts: usize,
+    backoff: Duration,
+    what: &str,
+    mut op: F,
+) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    let mut attempt = 1;
+    loop {
+        match op().await {
+            Ok(value) => return Ok(value),
+            Err(e) => {
+                if attempt >= max_attempts {
+                    return Err(e);
+                }
+                warn!("{what} failed (attempt {attempt}/{max_attempts}): {e}; retrying in {backoff:?}");
+                attempt += 1;
+                tokio::time::sleep(backoff).await;
+            }
+        }
+    }
+}
+
+/// Resolve a peer address, retrying with backoff so a node can come up once the peer
+/// becomes resolvable rather than failing on a transient startup DNS miss.
+pub async fn create_socket_addr_retry(
+    url: &str,
+) -> Result<SocketAddr, Box<dyn std::error::Error>> {
+    let what = format!("Resolving peer address {url}");
+    retry_with_backoff(
+        PEER_RESOLVE_MAX_ATTEMPTS,
+        PEER_RESOLVE_BACKOFF,
+        &what,
+        || create_socket_addr(url),
+    )
+    .await
+}
+
+/// Resolve a list of peer addresses, retrying each with backoff. Preserves order and
+/// length so the derived RAFT peer set stays consistent with configuration.
+pub async fn create_socket_addr_for_list_retry(
+    urls: &[String],
+) -> Result<Vec<SocketAddr>, Box<dyn std::error::Error>> {
+    let mut result = Vec::with_capacity(urls.len());
+    for url in urls {
+        result.push(create_socket_addr_retry(url).await?);
+    }
+    Ok(result)
+}
+
 /// Resolve each RAFT sibling's configured hostname to a stable socket address,
 /// excluding this node (`self_idx`). Entries that fail to resolve are skipped,
 /// matching the tolerance of the RAFT peer-list build. Returned pairs are
@@ -1720,6 +1782,40 @@ mod util_tests {
         // `.invalid` is reserved by RFC 2606 and never resolves.
         let result = create_socket_addr("http://peer-does-not-exist.invalid:12300").await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn retry_with_backoff_succeeds_after_transient_failures() {
+        // Fails twice, then succeeds: the operation should be retried until it works.
+        let calls = std::cell::Cell::new(0u32);
+        let result: Result<u32, String> =
+            retry_with_backoff(5, Duration::ZERO, "test op", || {
+                let n = calls.get() + 1;
+                calls.set(n);
+                async move {
+                    if n < 3 {
+                        Err(format!("transient {n}"))
+                    } else {
+                        Ok(n)
+                    }
+                }
+            })
+            .await;
+        assert_eq!(result, Ok(3));
+        assert_eq!(calls.get(), 3, "should stop retrying once it succeeds");
+    }
+
+    #[tokio::test]
+    async fn retry_with_backoff_returns_last_error_when_budget_exhausted() {
+        let calls = std::cell::Cell::new(0u32);
+        let result: Result<u32, String> =
+            retry_with_backoff(3, Duration::ZERO, "test op", || {
+                calls.set(calls.get() + 1);
+                async { Err::<u32, String>("always fails".to_string()) }
+            })
+            .await;
+        assert_eq!(result, Err("always fails".to_string()));
+        assert_eq!(calls.get(), 3, "should try exactly max_attempts times");
     }
 
     #[test]

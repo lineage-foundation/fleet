@@ -5,7 +5,7 @@ use fleet_core::db_utils::{self, SimpleDb, SimpleDbError, SimpleDbSpec};
 use fleet_core::interfaces::{BlockStoredInfo, CommonBlockInfo, MinedBlockExtraInfo};
 use fleet_core::raft::{RaftCommit, RaftCommitData, RaftData, RaftMessageWrapper};
 use fleet_core::raft_util::{RaftContextKey, RaftInFlightProposals};
-use fleet_core::utils::{create_socket_addr_for_list, BackupCheck};
+use fleet_core::utils::{create_socket_addr_for_list_retry, BackupCheck};
 use bincode::{deserialize, serialize};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -126,9 +126,11 @@ impl StorageRaft {
             .collect::<Vec<String>>();
         let raft_active = ActiveRaft::new(
             config.storage_node_idx,
-            &create_socket_addr_for_list(&storage_node_urls)
+            &create_socket_addr_for_list_retry(&storage_node_urls)
                 .await
-                .unwrap_or_default(),
+                .unwrap_or_else(|e| {
+                    panic!("Failed to resolve storage RAFT peer addresses after retries: {e}")
+                }),
             use_raft,
             Duration::from_millis(config.storage_raft_tick_timeout as u64),
             db_utils::new_db(config.storage_db_mode, &DB_SPEC, raft_db, None),
