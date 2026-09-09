@@ -1,14 +1,14 @@
 //! App to run a mempool node.
 
+use clap::{App, Arg, ArgMatches};
+use config::ConfigError;
+use fleet_api::ApiState;
 use fleet_core::configurations::MempoolNodeConfig;
-use fleet_mempool::MempoolNode;
 use fleet_core::{
     get_sanction_addresses, loop_wait_connnect_to_peers_async, loops_re_connect_disconnect,
     shutdown_connections, ResponseResult, SANC_LIST_PROD,
 };
-use fleet_api::ApiState;
-use clap::{App, Arg, ArgMatches};
-use config::ConfigError;
+use fleet_mempool::MempoolNode;
 use std::net::SocketAddr;
 use tracing::info;
 
@@ -269,7 +269,9 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
     });
 
     if let Some(tx_status_lifetime) = matches.value_of("tx_status_lifetime") {
-        settings = rebuild(settings, |b| Ok(b.set_override("tx_status_lifetime", tx_status_lifetime)?));
+        settings = rebuild(settings, |b| {
+            Ok(b.set_override("tx_status_lifetime", tx_status_lifetime)?)
+        });
     }
 
     if let Err(ConfigError::NotFound(_)) = settings.get_int("peer_limit") {
@@ -284,7 +286,9 @@ fn load_settings(matches: &clap::ArgMatches) -> config::Config {
         settings = rebuild(settings, |b| Ok(b.set_override("mempool_api_port", port)?));
     }
     if let Some(use_tls) = matches.value_of("api_use_tls") {
-        settings = rebuild(settings, |b| Ok(b.set_override("mempool_api_use_tls", use_tls)?));
+        settings = rebuild(settings, |b| {
+            Ok(b.set_override("mempool_api_use_tls", use_tls)?)
+        });
     }
     if let Some(index) = matches.value_of("index") {
         let mut db_mode = settings.get_table("mempool_db_mode").unwrap();
