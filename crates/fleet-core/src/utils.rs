@@ -843,42 +843,36 @@ pub fn validate_pow_block(header: &BlockHeader) -> Result<(), ValidatePoWBlockEr
 ///
 /// * `header`   - The header for PoW
 fn validate_pow_block_hash(header: &BlockHeader) -> Result<HeaderHash, ValidatePoWBlockError> {
-    // [AM] even though we've got explicit activation height in configuration
-    // and a hard-coded fallback elsewhere in the code, here
-    // we're basically sniffing at the difficulty field in the
-    // block header to figure out what the target actually is.
-    // this is fine when the choices are:
-    // (1) zero-length difficulty vec, or
-    // (2) a vec that can be converted to a CompactTarget
-    // however, if there's another change we will need to update
-    // this switching logic to be a bit smarter. context-free
-    // pure functions like this one either need to take additional
-    // arguments or be moved to something more stateful that can
-    // access configuration.
+    // [AM] the PoW target is read directly from the header's `bits` (nBits)
+    // field. The choices are:
+    // (1) bits == 0 -> no committed target, use the legacy leading-zeroes path
+    // (2) bits != 0 -> a CompactTarget the hash must fall below
+    // This context-free pure function only needs the header because the target
+    // is now committed in the header itself rather than derived elsewhere.
 
     // Ensure the nonce length is valid
     BlockHeader::check_nonce_length(header.get_nonce().len())
         .map_err(|cause| ValidatePoWBlockError::InvalidNonce { cause })?;
 
-    if header.difficulty.is_empty() {
-        let pow = serialize(header).unwrap();
-        validate_pow_leading_zeroes(&pow)
-            .map(HeaderHash::from)
-            .map_err(|cause| ValidatePoWBlockError::InvalidLeadingBytes { cause })
-    } else {
-        info!("We have difficulty");
+    match CompactTarget::from_bits(header.bits) {
+        None => {
+            // bits == 0: no committed target, fall back to leading zeroes.
+            let pow = serialize(header).unwrap();
+            validate_pow_leading_zeroes(&pow)
+                .map(HeaderHash::from)
+                .map_err(|cause| ValidatePoWBlockError::InvalidLeadingBytes { cause })
+        }
+        Some(target) => {
+            let header_hash = HeaderHash::calculate(header);
 
-        let target = CompactTarget::try_from_slice(&header.difficulty)
-            .map_err(|cause| ValidatePoWBlockError::InvalidDifficulty { cause })?;
-        let header_hash = HeaderHash::calculate(header);
-
-        if header_hash.is_below_compact_target(&target) {
-            Ok(header_hash)
-        } else {
-            Err(ValidatePoWBlockError::DoesntMeetThreshold {
-                header_hash,
-                target,
-            })
+            if header_hash.is_below_compact_target(&target) {
+                Ok(header_hash)
+            } else {
+                Err(ValidatePoWBlockError::DoesntMeetThreshold {
+                    header_hash,
+                    target,
+                })
+            }
         }
     }
 }
@@ -1816,6 +1810,49 @@ mod util_tests {
             .await;
         assert_eq!(result, Err("always fails".to_string()));
         assert_eq!(calls.get(), 3, "should try exactly max_attempts times");
+    }
+
+    fn pow_test_header(bits: usize) -> BlockHeader {
+        BlockHeader {
+            version: 1,
+            bits,
+            nonce_and_mining_tx_hash: (vec![0u8; 4], "coinbase".to_string()),
+            b_num: 42,
+            timestamp: 0,
+            seed_value: b"seed".to_vec(),
+            previous_hash: Some("prev".to_string()),
+            txs_merkle_root_and_hash: ("root".to_string(), "hash".to_string()),
+        }
+    }
+
+    #[test]
+    fn validate_pow_reads_target_from_committed_bits() {
+        // A compact target so easy that every possible 256-bit hash falls below
+        // it (mantissa 0x7fffff shifted well past 2^256).
+        let easy = CompactTarget::from_array([0x22, 0x7f, 0xff, 0xff]);
+        let header = pow_test_header(easy.to_bits());
+
+        // With the easy target committed in `bits`, PoW validation passes on the
+        // strength of the target path (no leading-zero requirement).
+        assert_eq!(validate_pow_block(&header), Ok(()));
+    }
+
+    #[test]
+    fn validate_pow_bits_zero_uses_legacy_leading_zeroes_path() {
+        // The same header validates under an easy committed target...
+        let easy = CompactTarget::from_array([0x22, 0x7f, 0xff, 0xff]);
+        let with_target = pow_test_header(easy.to_bits());
+        assert_eq!(validate_pow_block(&with_target), Ok(()));
+
+        // ...but with bits == 0 the target path is skipped and the legacy
+        // leading-zeroes rule applies. This fixture's hash has no leading zero
+        // byte, so it must be rejected with a leading-bytes error, proving the
+        // legacy branch was taken rather than the (easy) target branch.
+        let legacy = pow_test_header(0);
+        assert!(matches!(
+            validate_pow_block(&legacy),
+            Err(ValidatePoWBlockError::InvalidLeadingBytes { .. })
+        ));
     }
 
     #[test]

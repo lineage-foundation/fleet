@@ -2118,6 +2118,17 @@ impl MempoolNode {
             });
         }
 
+        // Bitcoin-parity hardening: the PoW hash meeting `header.bits` above is
+        // necessary but not sufficient — a miner could commit an easier-than-required
+        // target. Recompute the expected ASERT target from RAFT-tracked consensus
+        // state and reject the block unless the committed `bits` matches exactly.
+        if let Err(reason) = self.node_raft.verify_committed_asert_bits(&block_to_check) {
+            return Some(Response {
+                success: false,
+                reason,
+            });
+        }
+
         // TODO: D and P will need to change with keccak prime intro
         let (nonce, coinbase_hash) = block_to_check.nonce_and_mining_tx_hash;
         let pow_info = WinningPoWInfo {
