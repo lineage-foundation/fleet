@@ -1113,14 +1113,16 @@ impl MempoolRaft {
     /// Recompute the expected ASERT PoW target and verify it matches the
     /// target committed in a proposed winning block's `header.bits`.
     ///
-    /// This is the Bitcoin-parity hardening: a block's committed difficulty
-    /// must equal the value every honest node derives, so a miner cannot
-    /// smuggle in an easier (or otherwise wrong) target. Above the ASERT
-    /// activation height the target is a deterministic function of
+    /// `header` here is the node's OWN constructed block (miners supply only
+    /// the nonce/coinbase via `apply_mining_tx`, never `bits`), so this is a
+    /// determinism / self-consistency guard: it asserts the target committed at
+    /// construction still equals the one recomputed at validation. Above the
+    /// ASERT activation height the target is a deterministic function of
     /// RAFT-tracked consensus state — the activation height, the block number,
     /// and the running winning-hash count — so every mempool node computes the
-    /// same expected `bits`. At or below the activation height there is no
-    /// committed target (`bits == 0`) and there is nothing to check here.
+    /// same expected `bits`; a mismatch means construction and validation have
+    /// diverged. At or below the activation height there is no committed target
+    /// (`bits == 0`) and there is nothing to check here.
     pub fn verify_committed_asert_bits(&self, header: &BlockHeader) -> Result<(), String> {
         let activation_height = self.consensused.block_pipeline.get_activation_height_asert();
         let b_num = header.b_num;

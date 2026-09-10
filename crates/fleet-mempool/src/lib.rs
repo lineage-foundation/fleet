@@ -2118,10 +2118,11 @@ impl MempoolNode {
             });
         }
 
-        // Bitcoin-parity hardening: the PoW hash meeting `header.bits` above is
-        // necessary but not sufficient — a miner could commit an easier-than-required
-        // target. Recompute the expected ASERT target from RAFT-tracked consensus
-        // state and reject the block unless the committed `bits` matches exactly.
+        // Determinism guard: recompute the expected ASERT target from RAFT-tracked
+        // consensus state and reject unless the committed `bits` matches exactly.
+        // This block's header is locally constructed (miners supply only the
+        // nonce/coinbase), so this asserts construction and validation agree on
+        // the committed target — not a guard against a miner-supplied target.
         if let Err(reason) = self.node_raft.verify_committed_asert_bits(&block_to_check) {
             return Some(Response {
                 success: false,
