@@ -613,6 +613,63 @@ async fn nodes_tls_ca_unmapped_mismatch() {
     complete_mempool_nodes(nodes).await;
 }
 
+/// A miner that disconnects must free the sub-peer slot the mempool reserved for it during
+/// the handshake. The `sub_peers` set used to be insert-only, so a miner reconnecting from a
+/// new source address (e.g. a restarted container) leaked its old slot and the count climbed
+/// until it hit `sub_peer_limit` and further miners were rejected. This is the regression test.
+#[tokio::test(flavor = "current_thread")]
+async fn miner_disconnect_frees_sub_peer_slot() {
+    let _ = tracing_log_try_init();
+
+    //
+    // Arrange
+    //
+    let mut mempool = create_node_type_version(4, NodeType::Mempool, NETWORK_VERSION).await;
+    let mut miner1 = create_node_type_version(4, NodeType::Miner, NETWORK_VERSION).await;
+
+    // The mempool reserves a sub-peer slot for the miner while handling the handshake, which
+    // completes before `connect_to` returns.
+    miner1.connect_to(mempool.local_address()).await.unwrap();
+    assert_eq!(
+        mempool.sub_peer_count().await,
+        1,
+        "mempool reserves a sub-peer slot when the miner connects"
+    );
+
+    //
+    // Act
+    //
+    // Grab the mempool-side receiver task handle so we can wait for its disconnect cleanup to
+    // run. With `trust_advertised_peer_address` off and a localhost connection, the miner is
+    // keyed on the mempool by its own listener address.
+    let mempool_join = mempool.take_join_handle(miner1.local_address()).await;
+    // Drop the miner's side of the connection; this closes the socket the mempool reads from.
+    join_all(miner1.disconnect_all(None).await).await;
+    join_all(mempool_join).await;
+
+    //
+    // Assert
+    //
+    // Fails before the fix: `sub_peers` was never removed from, so this stayed at 1.
+    assert_eq!(
+        mempool.sub_peer_count().await,
+        0,
+        "disconnecting the miner frees its sub-peer slot"
+    );
+
+    // A different miner (a distinct advertised address) reconnecting takes exactly one slot,
+    // not two - i.e. the previous slot did not leak.
+    let mut miner2 = create_node_type_version(4, NodeType::Miner, NETWORK_VERSION).await;
+    miner2.connect_to(mempool.local_address()).await.unwrap();
+    assert_eq!(
+        mempool.sub_peer_count().await,
+        1,
+        "a reconnecting miner does not leak the old slot"
+    );
+
+    complete_mempool_nodes(vec![mempool, miner1, miner2]).await;
+}
+
 async fn create_mempool_nodes(num_nodes: usize, peer_limit: usize) -> Vec<Node> {
     let configs = std::iter::repeat_with(get_common_tls_config)
         .take(num_nodes)
