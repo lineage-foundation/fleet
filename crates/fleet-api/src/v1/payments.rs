@@ -14,7 +14,7 @@ use axum::Json;
 use fleet_core::interfaces::{UserApiRequest, UserRequest};
 use fleet_core::threaded_call::make_threaded_call;
 use serde::{Deserialize, Serialize};
-use tw_chain::primitives::asset::{Asset, TokenAmount};
+use prime::primitives::asset::{Asset, TokenAmount};
 use utoipa::ToSchema;
 
 use super::asset::ApiAsset;

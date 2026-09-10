@@ -177,9 +177,9 @@ mod tests {
     use http_body_util::BodyExt;
     use serde_json::Value;
     use tower::ServiceExt;
-    use tw_chain::crypto::sign_ed25519 as sign;
-    use tw_chain::primitives::asset::TokenAmount;
-    use tw_chain::primitives::transaction::{GenesisTxHashSpec, Transaction};
+    use prime::crypto::sign_ed25519 as sign;
+    use prime::primitives::asset::TokenAmount;
+    use prime::primitives::transaction::{GenesisTxHashSpec, Transaction};
     use utoipa::OpenApi as _;
 
     use super::*;

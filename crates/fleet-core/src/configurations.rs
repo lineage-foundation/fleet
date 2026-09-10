@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::net::SocketAddr;
-use tw_chain::primitives::asset::TokenAmount;
+use prime::primitives::asset::TokenAmount;
 
 pub type UtxoSetSpec = BTreeMap<String, Vec<TxOutSpec>>;
 

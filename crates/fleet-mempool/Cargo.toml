@@ -14,7 +14,7 @@ serde = { version = "1.0.104", features = ["derive"] }
 tokio = { version = "1.7.1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1.40"
 tracing-futures = "0.2.3"
-tw_chain = "1.1.3"
+prime = { path = "../prime" }
 
 [dev-dependencies]
 rug = "1.7.0"

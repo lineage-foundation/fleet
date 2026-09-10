@@ -1,7 +1,7 @@
 //! `GET /v1/supply` — total and issued token supply.
 //!
 //! Reuses the legacy `get_total_supply`/`get_issued_supply` handlers: `total` is the
-//! `TOTAL_TOKENS` constant (`fleet_core::constants`, re-exported from `tw_chain`);
+//! `TOTAL_TOKENS` constant (`fleet_core::constants`, re-exported from `prime`);
 //! `issued` comes from a threaded call into the mempool node's
 //! `MempoolApi::get_issued_supply`.
 

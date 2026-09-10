@@ -41,10 +41,10 @@ use tokio::task;
 use tokio::time::Duration;
 use tracing::{debug, error, error_span, info, info_span, trace, warn};
 use tracing_futures::Instrument;
-use tw_chain::primitives::asset::{Asset, TokenAmount};
-use tw_chain::primitives::block::{self, BlockHeader};
-use tw_chain::primitives::transaction::Transaction;
-use tw_chain::utils::transaction_utils::{
+use prime::primitives::asset::{Asset, TokenAmount};
+use prime::primitives::block::{self, BlockHeader};
+use prime::primitives::transaction::Transaction;
+use prime::utils::transaction_utils::{
     construct_tx_core, construct_tx_hash, update_input_signatures,
 };
 

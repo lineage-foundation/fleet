@@ -30,11 +30,11 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::time::{self, Instant};
 use tracing::{debug, error, info, trace, warn};
-use tw_chain::crypto::sha3_256;
-use tw_chain::primitives::asset::TokenAmount;
-use tw_chain::primitives::block::Block;
-use tw_chain::primitives::transaction::Transaction;
-use tw_chain::utils::transaction_utils::{construct_tx_hash, get_inputs_previous_out_point};
+use prime::crypto::sha3_256;
+use prime::primitives::asset::TokenAmount;
+use prime::primitives::block::Block;
+use prime::primitives::transaction::Transaction;
+use prime::utils::transaction_utils::{construct_tx_hash, get_inputs_previous_out_point};
 
 pub const DB_SPEC: SimpleDbSpec = SimpleDbSpec {
     db_path: DB_PATH,
@@ -1136,7 +1136,7 @@ impl MempoolRaft {
     /// Only used during tests
     pub fn get_committed_utxo_tracked_pk_cache(
         &self,
-    ) -> std::collections::HashMap<String, BTreeSet<tw_chain::primitives::transaction::OutPoint>>
+    ) -> std::collections::HashMap<String, BTreeSet<prime::primitives::transaction::OutPoint>>
     {
         self.consensused.utxo_set.get_pk_cache()
     }
@@ -2081,8 +2081,8 @@ mod test {
     use fleet_core::utils::{create_socket_addr, create_valid_transaction, get_test_common_unicorn};
     use rug::Integer;
     use std::collections::BTreeSet;
-    use tw_chain::crypto::sign_ed25519 as sign;
-    use tw_chain::primitives::asset::TokenAmount;
+    use prime::crypto::sign_ed25519 as sign;
+    use prime::primitives::asset::TokenAmount;
 
     #[test]
     fn snapshot_pre_dropped_restores_with_empty_dropped_votes() {

@@ -1,6 +1,6 @@
 //! Client-transaction DTOs and conversion machinery, ported from the legacy fleet-api
 //! handlers. These types let a client submit a transaction as JSON (with hex-encoded
-//! signatures/pubkeys/stack bytes) and have it converted into a `tw_chain::Transaction`,
+//! signatures/pubkeys/stack bytes) and have it converted into a `prime::Transaction`,
 //! and the reverse: turning a stored/serialized `Transaction` back into the same JSON
 //! shape.
 
@@ -10,12 +10,12 @@ use std::fmt;
 use fleet_core::utils::{decode_pub_key, decode_signature, StringError};
 use serde::de::{Error, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
-use tw_chain::crypto::sign_ed25519::{PublicKey, Signature};
-use tw_chain::primitives::druid::DdeValues;
-use tw_chain::primitives::transaction::{OutPoint, Transaction, TxIn, TxOut};
-use tw_chain::script::lang::Script;
-use tw_chain::script::{OpCodes, StackEntry};
-use tw_chain::utils::transaction_utils::construct_tx_hash;
+use prime::crypto::sign_ed25519::{PublicKey, Signature};
+use prime::primitives::druid::DdeValues;
+use prime::primitives::transaction::{OutPoint, Transaction, TxIn, TxOut};
+use prime::script::lang::Script;
+use prime::script::{OpCodes, StackEntry};
+use prime::utils::transaction_utils::construct_tx_hash;
 use utoipa::ToSchema;
 
 /// Stack entry enum which stores Signature and PubKey items as hex strings
@@ -300,7 +300,7 @@ fn from_transaction(tx: Transaction) -> CreateTransaction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tw_chain::primitives::asset::{Asset, TokenAmount};
+    use prime::primitives::asset::{Asset, TokenAmount};
 
     #[test]
     fn to_transaction_then_from_hex_transaction_roundtrips_outputs_and_version() {

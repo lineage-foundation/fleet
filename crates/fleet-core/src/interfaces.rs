@@ -15,12 +15,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task;
-use tw_chain::primitives::asset::Asset;
-use tw_chain::primitives::asset::TokenAmount;
-use tw_chain::primitives::block::{Block, BlockHeader};
-use tw_chain::primitives::druid::DruidExpectation;
-use tw_chain::primitives::transaction::{GenesisTxHashSpec, TxIn};
-use tw_chain::primitives::transaction::{OutPoint, Transaction, TxOut};
+use prime::primitives::asset::Asset;
+use prime::primitives::asset::TokenAmount;
+use prime::primitives::block::{Block, BlockHeader};
+use prime::primitives::druid::DruidExpectation;
+use prime::primitives::transaction::{GenesisTxHashSpec, TxIn};
+use prime::primitives::transaction::{OutPoint, Transaction, TxOut};
 
 //*======== INITIAL ISSUANCES =========*//
 

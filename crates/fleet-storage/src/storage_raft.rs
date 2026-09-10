@@ -14,7 +14,7 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tracing::{debug, trace, warn};
-use tw_chain::crypto::sha3_256;
+use prime::crypto::sha3_256;
 
 pub const DB_SPEC: SimpleDbSpec = SimpleDbSpec {
     db_path: DB_PATH,

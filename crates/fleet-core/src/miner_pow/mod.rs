@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info};
 #[cfg(feature = "gpu")]
 use tracing::warn;
-use tw_chain::primitives::block::BlockHeader;
+use prime::primitives::block::BlockHeader;
 
 pub const SHA3_256_BYTES: usize = 32;
 pub const BLOCK_HEADER_MAX_BYTES: usize = 1024;
