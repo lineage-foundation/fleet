@@ -15,6 +15,7 @@ use utoipa::ToSchema;
 use crate::error::ApiProblem;
 use crate::state::ApiState;
 use crate::v1::blockchain::{item_to_entry_response, BlockchainEntryResponse};
+use crate::v1::difficulty::{difficulty_target_from_block_value, DifficultyTarget};
 
 /// The latest stored block.
 ///
@@ -25,6 +26,10 @@ use crate::v1::blockchain::{item_to_entry_response, BlockchainEntryResponse};
 pub struct LatestBlockResponse {
     #[schema(value_type = Object)]
     pub block: Value,
+    /// The block header's committed PoW target (`bits`), decoded into its compact
+    /// `nBits` and expanded 256-bit forms. `null` when the header carries no
+    /// committed target (legacy `bits == 0`). The raw `bits` remains in `block`.
+    pub difficulty_target: Option<DifficultyTarget>,
 }
 
 /// Get the most recently stored block.
@@ -49,7 +54,12 @@ pub async fn get_latest_block(State(state): State<ApiState>) -> Result<Json<Late
     let block: Value = serde_json::from_slice(&item.data_json)
         .map_err(|err| ApiProblem::internal(err.to_string()))?;
 
-    Ok(Json(LatestBlockResponse { block }))
+    let difficulty_target = difficulty_target_from_block_value(&block);
+
+    Ok(Json(LatestBlockResponse {
+        block,
+        difficulty_target,
+    }))
 }
 
 /// Get a single stored block by number.

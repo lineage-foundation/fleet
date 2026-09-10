@@ -1279,6 +1279,17 @@
             "type": "object",
             "description": "The entry's JSON payload, as stored alongside the binary-encoded data."
           },
+          "difficulty_target": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DifficultyTarget",
+                "description": "For a block entry, the header's committed PoW target (`bits`), decoded into\nits compact `nBits` and expanded 256-bit forms. `null` for transaction\nentries or when the header carries no committed target (legacy `bits == 0`).\nThe raw `bits` remains in `data`."
+              }
+            ]
+          },
           "item_meta": {
             "$ref": "#/components/schemas/BlockchainItemMetaResponse",
             "description": "Whether this entry is a block or a transaction, with its position metadata."
@@ -1616,6 +1627,17 @@
               "null"
             ],
             "description": "The current mining block (`fleet_core::interfaces::BlockPoWReceived`), passed\nthrough as JSON unchanged, or `null` if no block has been received yet."
+          },
+          "difficulty_target": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DifficultyTarget",
+                "description": "The current block header's committed PoW target (`bits`), decoded into its\ncompact `nBits` and expanded 256-bit forms. `null` when no block has been\nreceived yet or the header carries no committed target (legacy `bits == 0`)."
+              }
+            ]
           }
         }
       },
@@ -1688,6 +1710,26 @@
             "items": {
               "$ref": "#/components/schemas/CreateTransaction"
             }
+          }
+        }
+      },
+      "DifficultyTarget": {
+        "type": "object",
+        "description": "A decoded, human-readable view of a block header's committed PoW target\n(`bits`).",
+        "required": [
+          "compact",
+          "target"
+        ],
+        "properties": {
+          "compact": {
+            "type": "string",
+            "description": "The compact target in Bitcoin `nBits` form, e.g. `\"0x1d00ffff\"`.",
+            "example": "0x1d00ffff"
+          },
+          "target": {
+            "type": "string",
+            "description": "The full 256-bit target the block hash must not exceed, as 64 lowercase\nhex characters (no `0x` prefix).",
+            "example": "00000000ffff0000000000000000000000000000000000000000000000000000"
           }
         }
       },
@@ -1803,6 +1845,17 @@
         "properties": {
           "block": {
             "type": "object"
+          },
+          "difficulty_target": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DifficultyTarget",
+                "description": "The block header's committed PoW target (`bits`), decoded into its compact\n`nBits` and expanded 256-bit forms. `null` when the header carries no\ncommitted target (legacy `bits == 0`). The raw `bits` remains in `block`."
+              }
+            ]
           }
         }
       },

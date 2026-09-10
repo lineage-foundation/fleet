@@ -21,6 +21,8 @@ use crate::v1::blocks::{
 #[allow(unused_imports)]
 use crate::v1::debug::{__path_get_debug, get_debug, DebugData, PeerInfo};
 #[allow(unused_imports)]
+use crate::v1::difficulty::DifficultyTarget;
+#[allow(unused_imports)]
 use crate::v1::donations::{__path_post_donation_request, post_donation_request, DonationRequest};
 #[allow(unused_imports)]
 use crate::v1::items::{
@@ -95,6 +97,7 @@ use crate::v1::wallet::{
     components(schemas(
         DebugData,
         PeerInfo,
+        DifficultyTarget,
         LatestBlockResponse,
         BlockchainEntryResponse,
         BlockchainItemMetaResponse,
