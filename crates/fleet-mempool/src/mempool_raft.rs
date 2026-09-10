@@ -32,7 +32,7 @@ use tokio::time::{self, Instant};
 use tracing::{debug, error, info, trace, warn};
 use prime::crypto::sha3_256;
 use prime::primitives::asset::TokenAmount;
-use prime::primitives::block::Block;
+use prime::primitives::block::{Block, BlockHeader};
 use prime::primitives::transaction::Transaction;
 use prime::utils::transaction_utils::{construct_tx_hash, get_inputs_previous_out_point};
 
@@ -1110,6 +1110,47 @@ impl MempoolRaft {
         self.consensused.get_mining_block()
     }
 
+    /// Recompute the expected ASERT PoW target and verify it matches the
+    /// target committed in a proposed winning block's `header.bits`.
+    ///
+    /// `header` here is the node's OWN constructed block (miners supply only
+    /// the nonce/coinbase via `apply_mining_tx`, never `bits`), so this is a
+    /// determinism / self-consistency guard: it asserts the target committed at
+    /// construction still equals the one recomputed at validation. Above the
+    /// ASERT activation height the target is a deterministic function of
+    /// RAFT-tracked consensus state — the activation height, the block number,
+    /// and the running winning-hash count — so every mempool node computes the
+    /// same expected `bits`; a mismatch means construction and validation have
+    /// diverged. At or below the activation height there is no committed target
+    /// (`bits == 0`) and there is nothing to check here.
+    pub fn verify_committed_asert_bits(&self, header: &BlockHeader) -> Result<(), String> {
+        let activation_height = self.consensused.block_pipeline.get_activation_height_asert();
+        let b_num = header.b_num;
+
+        // Mirror the `<` gate used when the target is written in
+        // `update_block_header`: ASERT only applies from the block AFTER the
+        // activation height.
+        if activation_height < b_num {
+            let expected = calculate_asert_target(
+                activation_height,
+                b_num,
+                self.consensused
+                    .block_pipeline
+                    .get_asert_winning_hashes_count(),
+            )
+            .to_bits();
+
+            if header.bits != expected {
+                return Err(format!(
+                    "Committed difficulty target mismatch: header.bits={} expected={} (b_num={b_num})",
+                    header.bits, expected
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Current block number
     pub fn get_current_block_num(&self) -> u64 {
         if let Some(block) = self.consensused.get_mining_block() {
@@ -1752,7 +1793,9 @@ impl MempoolConsensused {
                 self.block_pipeline.get_asert_winning_hashes_count(),
             );
 
-            block.header.difficulty = target.into_array().to_vec();
+            // Commit the ASERT target into the header's `bits` (nBits) field.
+            // Below the activation height `bits` stays 0 (legacy/no target).
+            block.header.bits = target.to_bits();
         }
 
         block.header.previous_hash = Some(previous_hash);
@@ -2077,6 +2120,7 @@ fn take_first_n<K: Clone + Ord, V>(n: usize, from: &mut BTreeMap<K, V>) -> BTree
 #[cfg(test)]
 mod test {
     use super::*;
+    use fleet_core::asert::CompactTarget;
     use fleet_core::configurations::{DbMode, NodeSpec, TxOutSpec};
     use fleet_core::utils::{create_socket_addr, create_valid_transaction, get_test_common_unicorn};
     use rug::Integer;
@@ -2541,6 +2585,67 @@ mod test {
         let mut node = MempoolRaft::new(&mempool_config, Default::default()).await;
         node.set_key_run(0);
         node
+    }
+
+    #[tokio::test]
+    async fn verify_committed_asert_bits_accepts_correct_and_rejects_tampered() {
+        let mut node = new_test_node(&[]).await;
+
+        // Activate ASERT at height 2 so a later block has a committed target.
+        let activation_height = 2u64;
+        let block_pipeline = std::mem::take(&mut node.consensused.block_pipeline)
+            .with_activation_height_asert(activation_height);
+        node.consensused.block_pipeline = block_pipeline;
+
+        let b_num = 10u64;
+        let winning = node
+            .consensused
+            .block_pipeline
+            .get_asert_winning_hashes_count();
+        let expected = calculate_asert_target(activation_height, b_num, winning);
+
+        // A header committing exactly the recomputed target is accepted.
+        let mut header = BlockHeader::new();
+        header.b_num = b_num;
+        header.bits = expected.to_bits();
+        assert!(
+            node.verify_committed_asert_bits(&header).is_ok(),
+            "correct committed bits must be accepted"
+        );
+
+        // Any deviation from the recomputed target is rejected. (At these test
+        // heights the very easy anchor target clamps the canonical target to
+        // MAX, the easiest representable value, so a strictly-*easier* tamper
+        // isn't representable; we tamper to a different, harder target instead,
+        // which the exact-match rule must still reject.)
+        let tampered = CompactTarget::from_array([0x1d, 0x00, 0xff, 0xff]);
+        assert_ne!(
+            tampered.to_bits(),
+            expected.to_bits(),
+            "test setup: tampered bits must differ from expected"
+        );
+        header.bits = tampered.to_bits();
+        assert!(
+            node.verify_committed_asert_bits(&header).is_err(),
+            "tampered committed bits must be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_committed_asert_bits_skips_below_activation() {
+        let mut node = new_test_node(&[]).await;
+
+        let activation_height = 100u64;
+        let block_pipeline = std::mem::take(&mut node.consensused.block_pipeline)
+            .with_activation_height_asert(activation_height);
+        node.consensused.block_pipeline = block_pipeline;
+
+        // At/below the activation height there is no committed target, so any
+        // `bits` (including a bogus one) is accepted by this check.
+        let mut header = BlockHeader::new();
+        header.b_num = activation_height; // not strictly greater -> gate is skipped
+        header.bits = CompactTarget::MAX.to_bits();
+        assert!(node.verify_committed_asert_bits(&header).is_ok());
     }
 
     fn valid_transaction(

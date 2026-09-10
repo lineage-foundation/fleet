@@ -5,6 +5,7 @@ pub mod balances;
 pub mod blockchain;
 pub mod blocks;
 pub mod debug;
+pub mod difficulty;
 pub mod donations;
 pub mod items;
 pub mod mining;
@@ -1361,6 +1362,51 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = body_json(response).await;
         assert_eq!(body["block"], Value::Null);
+        assert_eq!(body["difficulty_target"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn get_current_block_includes_decoded_difficulty_target() {
+        use fleet_core::interfaces::BlockPoWReceived;
+        use prime::primitives::block::BlockHeader;
+
+        let mut header = BlockHeader::new();
+        header.bits = 0x1d00ffff;
+        let current_block = Arc::new(tokio::sync::Mutex::new(Some(BlockPoWReceived {
+            block: header,
+            reward: TokenAmount(0),
+        })));
+
+        let node = test_node(NodeType::Miner).await;
+        let state = ApiState::miner_solo(
+            node,
+            api_keys(vec![]),
+            empty_routes_pow(),
+            empty_wallet_db(),
+            current_block,
+        );
+        let app = miner_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/mining/current-block")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        // Raw bits still passed through on the block.
+        assert_eq!(body["block"]["block"]["bits"].as_u64(), Some(0x1d00ffff));
+        // Decoded sibling present.
+        assert_eq!(body["difficulty_target"]["compact"], "0x1d00ffff");
+        assert_eq!(
+            body["difficulty_target"]["target"],
+            "00000000ffff0000000000000000000000000000000000000000000000000000"
+        );
     }
 
     #[tokio::test]

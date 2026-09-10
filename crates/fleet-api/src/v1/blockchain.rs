@@ -17,6 +17,7 @@ use utoipa::ToSchema;
 
 use crate::error::ApiProblem;
 use crate::state::ApiState;
+use crate::v1::difficulty::{difficulty_target_from_block_value, DifficultyTarget};
 
 /// A single stored blockchain entry (a block or a transaction), as kept in the
 /// blockchain DB.
@@ -29,6 +30,11 @@ pub struct BlockchainEntryResponse {
     /// The entry's JSON payload, as stored alongside the binary-encoded data.
     #[schema(value_type = Object)]
     pub data: Value,
+    /// For a block entry, the header's committed PoW target (`bits`), decoded into
+    /// its compact `nBits` and expanded 256-bit forms. `null` for transaction
+    /// entries or when the header carries no committed target (legacy `bits == 0`).
+    /// The raw `bits` remains in `data`.
+    pub difficulty_target: Option<DifficultyTarget>,
 }
 
 /// Typed mirror of `fleet_core::interfaces::BlockchainItemMeta`.
@@ -61,10 +67,13 @@ pub(crate) fn item_to_entry_response(item: BlockchainItem) -> Result<BlockchainE
     let data: Value =
         serde_json::from_slice(&item.data_json).map_err(|err| ApiProblem::internal(err.to_string()))?;
 
+    let difficulty_target = difficulty_target_from_block_value(&data);
+
     Ok(BlockchainEntryResponse {
         key: String::from_utf8_lossy(&item.key).into_owned(),
         item_meta: item.item_meta.into(),
         data,
+        difficulty_target,
     })
 }
 

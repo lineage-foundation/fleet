@@ -226,17 +226,18 @@ impl PoWObject for BlockHeader {
     }
 
     fn pow_difficulty(&self) -> Result<PoWDifficulty, CompactTargetError> {
-        if self.difficulty.is_empty() {
-            // There is no difficulty function enabled
-            return Ok(PoWDifficulty::LeadingZeroBytes {
-                leading_zeroes: MINING_DIFFICULTY,
-            });
-        }
+        // The committed PoW target lives in the header's `bits` (nBits) field.
+        let compact_target = match CompactTarget::from_bits(self.bits) {
+            // bits == 0: no committed target, use the leading-zeroes path.
+            None => {
+                return Ok(PoWDifficulty::LeadingZeroBytes {
+                    leading_zeroes: MINING_DIFFICULTY,
+                });
+            }
+            Some(target) => target,
+        };
 
-        // Decode the difficulty bytes into a CompactTarget and then expand that into a target
-        // hash threshold.
-        let compact_target = CompactTarget::try_from_slice(&self.difficulty)?;
-
+        // Expand the CompactTarget into a target hash threshold.
         match expand_compact_target_difficulty(compact_target) {
             // The target value is higher than the largest possible SHA3-256 hash.
             None => Ok(PoWDifficulty::TargetHashAlwaysPass),
@@ -623,29 +624,29 @@ pub(super) mod test {
         const NO_DIFFICULTY: Self = Self {
             name: "NO_DIFFICULTY",
             difficulty: &[],
-            expected_nonce: 455,
+            expected_nonce: 287,
             max_nonce_count: 1024,
             requires_hw_accel: (false, false),
         };
         const THRESHOLD_EASY: Self = Self {
             name: "THRESHOLD_EASY",
             difficulty: b"\x22\x00\x00\x01",
-            expected_nonce: 28,
+            expected_nonce: 220,
             max_nonce_count: 1024,
             requires_hw_accel: (false, false),
         };
         const THRESHOLD_HARD: Self = Self {
             name: "THRESHOLD_HARD",
             difficulty: b"\x20\x00\x00\x01",
-            expected_nonce: 4894069,
-            max_nonce_count: 4900000,
+            expected_nonce: 48183046,
+            max_nonce_count: 49000000,
             requires_hw_accel: (true, false),
         };
         const THRESHOLD_VERY_HARD: Self = Self {
             name: "THRESHOLD_VERY_HARD",
             difficulty: b"\x1f\x00\x00\xFF",
-            expected_nonce: 14801080,
-            max_nonce_count: 15000000,
+            expected_nonce: 23532332,
+            max_nonce_count: 24000000,
             requires_hw_accel: (true, true),
         };
 
@@ -706,13 +707,22 @@ pub(super) mod test {
     pub const TEST_MINING_DIFFICULTY: &'static [u8] = b"\x22\x00\x00\x01";
 
     fn test_block_header(difficulty: &[u8]) -> BlockHeader {
+        // The compact target now lives in `bits`. An empty `difficulty` slice
+        // means "no committed target" (bits == 0 -> legacy leading-zeroes).
+        let bits = if difficulty.is_empty() {
+            0
+        } else {
+            CompactTarget::try_from_slice(difficulty)
+                .expect("test difficulty must be a 4-byte compact target")
+                .to_bits()
+        };
+
         BlockHeader {
             version: 1337,
-            bits: 10973,
+            bits,
             nonce_and_mining_tx_hash: (vec![], "abcde".to_string()),
             b_num: 2398927,
             timestamp: 29837637,
-            difficulty: difficulty.to_vec(),
             seed_value: b"2983zuifsigezd".to_vec(),
             previous_hash: Some("jeff".to_string()),
             txs_merkle_root_and_hash: ("merkle_root".to_string(), "hash".to_string()),

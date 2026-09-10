@@ -347,6 +347,34 @@ impl CompactTarget {
         Self(u32::from_be_bytes(array))
     }
 
+    /// Encodes this compact target as the block header's `bits` field.
+    ///
+    /// # Convention
+    ///
+    /// `bits` carries the compact target's underlying `u32` value verbatim,
+    /// widened to `usize` (i.e. `bits == self.0 as usize`). This is the numeric
+    /// value of the Bitcoin-style `nBits` word, NOT its byte serialization, so
+    /// the mapping is endianness-free and round-trips through `from_bits`.
+    ///
+    /// A `bits` of `0` is reserved as the "no committed target" sentinel (used
+    /// below the ASERT activation height), so this never returns `0` because a
+    /// valid `CompactTarget` always has a non-zero exponent byte.
+    pub fn to_bits(self) -> usize {
+        self.0 as usize
+    }
+
+    /// Decodes a block header's `bits` field back into a `CompactTarget`.
+    ///
+    /// Returns `None` when `bits == 0` (the "no committed target"/legacy
+    /// sentinel; a `0` compact target is degenerate) or when `bits` does not
+    /// fit in a `u32`. See [`CompactTarget::to_bits`] for the convention.
+    pub fn from_bits(bits: usize) -> Option<CompactTarget> {
+        if bits == 0 {
+            return None;
+        }
+        u32::try_from(bits).ok().map(Self)
+    }
+
     pub fn try_from_slice(slice: &[u8]) -> Result<Self, CompactTargetError> {
         // This requires that the slice's length is exactly 4
         slice
@@ -869,6 +897,45 @@ impl Asert {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod bits_conversions {
+        use super::*;
+
+        #[test]
+        fn to_bits_from_bits_round_trip() {
+            // A spread of real compact targets, including MAX and a few of the
+            // Bitcoin block test cases used elsewhere in this file.
+            for compact in [
+                CompactTarget::MAX,
+                CompactTarget::from_str("0x1d00ffff").unwrap(),
+                CompactTarget::from_str("0x1b0404cb").unwrap(),
+                CompactTarget::from_str("0x170355f0").unwrap(),
+                CompactTarget::from_str("0x22000001").unwrap(),
+                CompactTarget::from_str("0x20000001").unwrap(),
+            ] {
+                let bits = compact.to_bits();
+                assert_eq!(
+                    CompactTarget::from_bits(bits),
+                    Some(compact),
+                    "round trip for {compact}"
+                );
+                // The convention is "verbatim u32 widened to usize".
+                assert_eq!(bits, compact.into_array().iter().fold(0usize, |a, b| (a << 8) | *b as usize));
+            }
+        }
+
+        #[test]
+        fn from_bits_zero_is_none() {
+            // 0 is the "no committed target"/legacy sentinel.
+            assert_eq!(CompactTarget::from_bits(0), None);
+        }
+
+        #[test]
+        fn from_bits_rejects_oversized() {
+            // Anything that doesn't fit in a u32 is not a valid compact target.
+            assert_eq!(CompactTarget::from_bits((u32::MAX as usize) + 1), None);
+        }
+    }
 
     mod target_conversions {
         use super::*;

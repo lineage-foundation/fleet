@@ -1,9 +1,13 @@
 //! Test suite for the network functions.
 
+use fleet::asert::{calculate_asert_target, CompactTarget};
+use fleet::block_pipeline::MiningPipelineInfo;
 use fleet::configurations::{
-    MempoolNodeSharedConfig, MinerWhitelist, TxOutSpec, UserAutoGenTxSetup, UtxoSetSpec,
-    WalletTxSpec,
+    DbMode, MempoolNodeConfig, MempoolNodeSharedConfig, MinerWhitelist, NodeSpec, TxOutSpec,
+    UserAutoGenTxSetup, UtxoSetSpec, WalletTxSpec,
 };
+use fleet::get_test_common_unicorn;
+use fleet::mempool_raft::MempoolRaft;
 use fleet::constants::{NETWORK_VERSION, SANC_LIST_TEST};
 use fleet::interfaces::{
     BlockStoredInfo, BlockchainItem, BlockchainItemMeta, BlockchainItemType, CommonBlockInfo,
@@ -25,7 +29,8 @@ use fleet::user::UserNode;
 use fleet::utils::{
     apply_mining_tx, calculate_reward, construct_coinbase_tx, construct_valid_block_pow_hash,
     create_valid_transaction_with_ins_outs, decode_pub_key, decode_secret_key,
-    generate_pow_for_block, get_sanction_addresses, tracing_log_try_init, LocalEvent, StringError,
+    generate_pow_for_block, get_sanction_addresses, tracing_log_try_init, validate_pow_block,
+    LocalEvent, StringError,
 };
 use bincode::{deserialize, deserialize_from};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -5402,6 +5407,206 @@ fn basic_network_config(initial_port: u16) -> NetworkConfig {
         address_aggregation_limit: Some(5),
         initial_issuances: Default::default(),
     }
+}
+
+//
+// ASERT committed-difficulty (`header.bits`) coverage
+//
+
+/// Build a raft-less, in-memory `MempoolRaft` with a specific ASERT activation
+/// height. This mirrors the mempool unit-test node but lives at the integration
+/// boundary so we can exercise the shipped `verify_committed_asert_bits` path
+/// through the public `fleet` API surface.
+async fn new_asert_test_mempool_raft(activation_height: u64) -> MempoolRaft {
+    let mempool_node = NodeSpec {
+        address: "127.0.0.1:0".to_owned(),
+    };
+    let mempool_config = MempoolNodeConfig {
+        mempool_node_idx: 0,
+        mempool_db_mode: DbMode::InMemory,
+        tls_config: Default::default(),
+        api_keys: Default::default(),
+        mempool_unicorn_fixed_param: get_test_common_unicorn(),
+        mempool_nodes: vec![mempool_node],
+        storage_nodes: vec![],
+        user_nodes: vec![],
+        mempool_raft: 0,
+        mempool_raft_tick_timeout: 10,
+        mempool_mining_event_timeout: 500,
+        mempool_transaction_timeout: 50,
+        mempool_seed_utxo: Default::default(),
+        mempool_genesis_tx_in: None,
+        mempool_partition_full_size: 1,
+        mempool_minimum_miner_pool_len: 1,
+        jurisdiction: "US".to_string(),
+        sanction_list: Vec::new(),
+        mempool_api_use_tls: true,
+        mempool_api_port: 3003,
+        routes_pow: Default::default(),
+        backup_block_modulo: Default::default(),
+        utxo_re_align_block_modulo: Default::default(),
+        backup_restore: Default::default(),
+        mempool_miner_whitelist: Default::default(),
+        peer_limit: 1000,
+        sub_peer_limit: 1000,
+        initial_issuances: Default::default(),
+        tx_status_lifetime: 600000,
+        activation_height_asert: Some(activation_height),
+        trust_advertised_peer_address: false,
+    };
+    let mut node = MempoolRaft::new(&mempool_config, Default::default()).await;
+    node.set_key_run(0);
+    node
+}
+
+/// Above the ASERT activation height, every mempool node that applies the same
+/// committed pipeline state (activation height + winning-hash count + block
+/// number) must independently derive an identical, non-zero committed `bits`,
+/// and each node's `verify_committed_asert_bits` must accept exactly that value
+/// and reject any deviation.
+///
+/// Approach: pipeline-level rather than a full multi-node docker bring-up. The
+/// existing harness mining acts run entirely below the mainnet activation
+/// height, so they exercise only the legacy empty-target path and never
+/// construct an above-activation ASERT header organically. We therefore drive
+/// the exact computation `update_block_header` performs
+/// (`calculate_asert_target(activation, b_num, winning).to_bits()`) across N
+/// independently-seeded `MiningPipelineInfo` values, and run the shipped
+/// `verify_committed_asert_bits` on N independently-constructed mempool nodes.
+#[tokio::test(flavor = "current_thread")]
+async fn committed_bits_determinism_and_verification_above_activation() {
+    test_step_start();
+
+    let activation = 2u64;
+    let b_num = 10u64;
+    let node_count = 3usize;
+
+    // Each node's committed difficulty is a deterministic function of RAFT-tracked
+    // consensus state. Seed N pipelines identically, as separate committed nodes
+    // would be.
+    let pipelines: Vec<MiningPipelineInfo> = (0..node_count)
+        .map(|_| MiningPipelineInfo::default().with_activation_height_asert(activation))
+        .collect();
+
+    // The committed seed is identical across nodes.
+    let activations: BTreeSet<u64> = pipelines
+        .iter()
+        .map(|p| p.get_activation_height_asert())
+        .collect();
+    assert_eq!(
+        activations,
+        BTreeSet::from([activation]),
+        "every node must share the committed activation height"
+    );
+    let winning_counts: BTreeSet<u64> = pipelines
+        .iter()
+        .map(|p| p.get_asert_winning_hashes_count())
+        .collect();
+    assert_eq!(
+        winning_counts.len(),
+        1,
+        "every node must share the committed winning-hash count: {winning_counts:?}"
+    );
+    let winning = *winning_counts.iter().next().unwrap();
+
+    // Each node derives `bits` exactly as `update_block_header` does.
+    let derived_bits: Vec<usize> = pipelines
+        .iter()
+        .map(|p| {
+            calculate_asert_target(
+                p.get_activation_height_asert(),
+                b_num,
+                p.get_asert_winning_hashes_count(),
+            )
+            .to_bits()
+        })
+        .collect();
+
+    let unique_bits: BTreeSet<usize> = derived_bits.iter().copied().collect();
+    assert_eq!(
+        unique_bits.len(),
+        1,
+        "every node must derive identical committed bits: {derived_bits:?}"
+    );
+    let committed_bits = derived_bits[0];
+    assert_ne!(
+        committed_bits, 0,
+        "above the activation height the committed target must be non-zero"
+    );
+    assert!(
+        CompactTarget::from_bits(committed_bits).is_some(),
+        "committed bits must decode back into a valid CompactTarget"
+    );
+
+    // The value the nodes agreed on is exactly what the verifier recomputes.
+    let expected = calculate_asert_target(activation, b_num, winning);
+    assert_eq!(expected.to_bits(), committed_bits);
+
+    let mut header = BlockHeader::new();
+    header.b_num = b_num;
+    header.bits = committed_bits;
+
+    // A different (harder) target. At these very-easy anchor heights the canonical
+    // target clamps to MAX (the easiest representable value), so a strictly-easier
+    // tamper isn't representable; a harder target still violates the exact-match
+    // rule and must be rejected.
+    let tampered = CompactTarget::from_array([0x1d, 0x00, 0xff, 0xff]);
+    assert_ne!(
+        tampered.to_bits(),
+        committed_bits,
+        "test setup: tampered bits must differ from the committed target"
+    );
+    let mut tampered_header = header.clone();
+    tampered_header.bits = tampered.to_bits();
+
+    // Every node accepts the committed value and rejects the tampered one.
+    for i in 0..node_count {
+        let node = new_asert_test_mempool_raft(activation).await;
+        assert!(
+            node.verify_committed_asert_bits(&header).is_ok(),
+            "node {i}: correct committed bits must be accepted"
+        );
+        assert!(
+            node.verify_committed_asert_bits(&tampered_header).is_err(),
+            "node {i}: tampered committed bits must be rejected"
+        );
+    }
+
+    info!("Test Step complete");
+}
+
+/// At or below the ASERT activation height a block carries no committed target
+/// (`bits == 0`) and validates through the legacy leading-zeroes PoW path,
+/// mirroring the pre-ASERT (empty-difficulty) behaviour. This asserts the legacy
+/// path end-to-end at the validation level and confirms the committed-bits gate
+/// is skipped there.
+#[tokio::test(flavor = "current_thread")]
+async fn committed_bits_legacy_path_below_activation() {
+    test_step_start();
+
+    let activation = 100u64;
+
+    // A legacy block: no committed target, height not above activation.
+    let mut header = BlockHeader::new();
+    header.b_num = activation; // not strictly greater than activation
+    assert_eq!(header.bits, 0, "legacy blocks carry no committed target");
+
+    // Mine it via the legacy leading-zeroes path and validate end-to-end.
+    let nonce = generate_pow_for_block(&header)
+        .expect("error occurred while mining legacy block")
+        .expect("couldn't find a valid nonce");
+    header.nonce_and_mining_tx_hash.0 = nonce;
+    validate_pow_block(&header)
+        .expect("legacy leading-zeroes PoW must validate a bits==0 block");
+
+    // The committed-bits gate is skipped at/below activation, so bits==0 passes.
+    let node = new_asert_test_mempool_raft(activation).await;
+    assert!(
+        node.verify_committed_asert_bits(&header).is_ok(),
+        "at/below activation the committed-bits check must be skipped"
+    );
+
+    info!("Test Step complete");
 }
 
 fn complete_network_config(initial_port: u16) -> NetworkConfig {

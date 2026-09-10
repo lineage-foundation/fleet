@@ -525,11 +525,14 @@ pub mod convert {
     pub fn convert_block_header(old: old::tw_chain::BlockHeader) -> BlockHeader {
         BlockHeader {
             version: old.version,
-            bits: old.bits,
+            // Old `bits` was a serialized-size counter; in the new header `bits`
+            // carries the PoW target (0 = no committed target). `update_block_header`
+            // recomputes it before validation, so default to 0 rather than copy the
+            // now-meaningless stale value.
+            bits: 0,
             nonce_and_mining_tx_hash: old.nonce_and_mining_tx_hash,
             b_num: old.b_num,
             timestamp: 0,
-            difficulty: Vec::new(),
             seed_value: old.seed_value,
             previous_hash: old.previous_hash,
             txs_merkle_root_and_hash: old.txs_merkle_root_and_hash,
