@@ -1143,8 +1143,19 @@ impl Node {
             public_address: peer_in_addr,
         };
         let message = Bytes::from(serialize(&response)?);
-        self.send_bytes(peer_out_addr, &mut send_tx, message)
-            .await?;
+        if let Err(err) = self.send_bytes(peer_out_addr, &mut send_tx, message).await {
+            // The handshake failed after we reserved a sub-peer slot for a miner above. The
+            // receiver task's disconnect cleanup keys off `public_address`, which it only
+            // learns once the handshake succeeds, so it cannot release this slot. Release it
+            // here (keyed by the same `peer_in_addr` used to insert) so a failed handshake
+            // does not permanently consume sub-peer capacity. No-ops when nothing was tracked.
+            self.sub_peers.write().await.remove(&peer_in_addr);
+            self.miner_connection_attempts
+                .write()
+                .await
+                .remove(&peer_in_addr);
+            return Err(err);
+        }
 
         Ok(peer_in_addr)
     }
@@ -1327,8 +1338,22 @@ impl Node {
                 node.handle_peer_recv(public_address, messages).await;
                 // Since we don't wait for any messages from this peer, we can drop the connection.
                 warn!("Remove peer: {}", public_address);
-                let mut peers_list = peers.write().await;
-                let _ = peers_list.remove(&public_address);
+                {
+                    let mut peers_list = peers.write().await;
+                    let _ = peers_list.remove(&public_address);
+                }
+                // Free the sub-peer slot reserved for this peer during the handshake and
+                // clear its connection-attempt counter. `public_address` is the same key the
+                // handshake used when inserting into `sub_peers`, so a miner that reconnects
+                // (possibly from a new source address) no longer leaks its old slot. Both
+                // removals are no-ops for peers that were never tracked here. Done outside the
+                // `peers` lock, and in the same peers -> sub_peers -> attempts order the
+                // handshake acquires them, to avoid any lock-ordering deadlock.
+                node.sub_peers.write().await.remove(&public_address);
+                node.miner_connection_attempts
+                    .write()
+                    .await
+                    .remove(&public_address);
                 trace!("sock_in dropped for {:?}", peer_addr);
             }
             .instrument(span)
@@ -1354,6 +1379,12 @@ impl Node {
     /// Get node type
     pub fn get_node_type(&self) -> NodeType {
         self.node_type
+    }
+
+    /// Number of tracked sub-peers (miner slots reserved against `sub_peer_limit`).
+    #[cfg(test)]
+    pub async fn sub_peer_count(&self) -> usize {
+        self.sub_peers.read().await.len()
     }
 
     /// Get a list of peers
