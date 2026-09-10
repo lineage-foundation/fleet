@@ -4,10 +4,10 @@ use fleet_core::utils::{create_valid_transaction_with_ins_outs, make_wallet_tx_i
 use bincode::{deserialize, serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::debug;
-use tw_chain::crypto::sign_ed25519::{PublicKey, SecretKey};
-use tw_chain::primitives::asset::TokenAmount;
-use tw_chain::primitives::transaction::{OutPoint, Transaction};
-use tw_chain::utils::transaction_utils::{
+use prime::crypto::sign_ed25519::{PublicKey, SecretKey};
+use prime::primitives::asset::TokenAmount;
+use prime::primitives::transaction::{OutPoint, Transaction};
+use prime::utils::transaction_utils::{
     construct_address, construct_address_for, get_tx_out_with_out_point,
 };
 

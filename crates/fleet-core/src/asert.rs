@@ -10,7 +10,7 @@ use {
         str::FromStr,
         time::Duration,
     },
-    tw_chain::{crypto::sha3_256, primitives::block::BlockHeader},
+    prime::{crypto::sha3_256, primitives::block::BlockHeader},
 };
 
 /// Maps Lineage PoW parameters to ASERT inputs then computes and returns the

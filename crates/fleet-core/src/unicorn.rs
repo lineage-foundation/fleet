@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use tracing::error;
-use tw_chain::crypto::sha3_256;
+use prime::crypto::sha3_256;
 
 /// Constructs the seed for a new, ZNP-specific Unicorn
 ///

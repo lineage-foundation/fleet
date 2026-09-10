@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use serde::Serialize;
-use tw_chain::primitives::asset::Asset;
+use prime::primitives::asset::Asset;
 use utoipa::ToSchema;
 
 /// A chain asset, tagged by `kind` so each variant is fully described by the schema.

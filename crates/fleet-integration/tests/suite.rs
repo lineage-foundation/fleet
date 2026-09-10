@@ -39,15 +39,15 @@ use tokio::sync::Mutex;
 use tokio::time;
 use tracing::{debug, error, error_span, info};
 use tracing_futures::Instrument;
-use tw_chain::crypto::sha3_256;
-use tw_chain::crypto::sign_ed25519 as sign;
-use tw_chain::crypto::sign_ed25519::{PublicKey, SecretKey};
-use tw_chain::primitives::asset::{Asset, AssetValues, TokenAmount};
-use tw_chain::primitives::block::{Block, BlockHeader};
-use tw_chain::primitives::druid::DruidExpectation;
-use tw_chain::primitives::transaction::{GenesisTxHashSpec, OutPoint, Transaction, TxOut};
-use tw_chain::script::StackEntry;
-use tw_chain::utils::transaction_utils::{
+use prime::crypto::sha3_256;
+use prime::crypto::sign_ed25519 as sign;
+use prime::crypto::sign_ed25519::{PublicKey, SecretKey};
+use prime::primitives::asset::{Asset, AssetValues, TokenAmount};
+use prime::primitives::block::{Block, BlockHeader};
+use prime::primitives::druid::DruidExpectation;
+use prime::primitives::transaction::{GenesisTxHashSpec, OutPoint, Transaction, TxOut};
+use prime::script::StackEntry;
+use prime::utils::transaction_utils::{
     construct_address, construct_item_create_tx, construct_tx_hash,
     construct_tx_in_signable_asset_hash, get_tx_out_with_out_point_cloned,
 };

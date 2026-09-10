@@ -13,8 +13,8 @@ use axum::Json;
 use fleet_core::interfaces::{MempoolError, UserApiRequest, UserRequest};
 use fleet_core::threaded_call::make_threaded_call;
 use serde::{Deserialize, Serialize};
-use tw_chain::primitives::asset::{Asset, ItemAsset};
-use tw_chain::primitives::transaction::GenesisTxHashSpec;
+use prime::primitives::asset::{Asset, ItemAsset};
+use prime::primitives::transaction::GenesisTxHashSpec;
 use utoipa::ToSchema;
 
 use super::asset::ApiAsset;

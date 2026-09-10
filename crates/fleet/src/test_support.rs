@@ -1,6 +1,6 @@
 use crate::utils::create_valid_transaction;
 use crate::wallet::WalletDb;
-use tw_chain::primitives::{asset::Asset, transaction::OutPoint};
+use prime::primitives::{asset::Asset, transaction::OutPoint};
 
 /// Creates a "fake" transaction to save to the local wallet
 /// for testing. The transaction will contain 4 tokens

@@ -1,4 +1,4 @@
-pub use tw_chain::constants::*;
+pub use prime::constants::*;
 
 /*------- BLOCK CONSTANTS --------*/
 

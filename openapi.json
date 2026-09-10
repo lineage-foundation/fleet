@@ -1831,7 +1831,7 @@
             "items": {
               "type": "object"
             },
-            "description": "`[hash, transaction]` pairs (`tw_chain::primitives::transaction::Transaction`),\npassed through as JSON unchanged, mirroring the legacy embed-as-JSON behaviour."
+            "description": "`[hash, transaction]` pairs (`prime::primitives::transaction::Transaction`),\npassed through as JSON unchanged, mirroring the legacy embed-as-JSON behaviour."
           }
         }
       },

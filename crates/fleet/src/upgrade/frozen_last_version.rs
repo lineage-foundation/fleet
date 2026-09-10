@@ -505,15 +505,15 @@ pub mod convert {
     use crate::unicorn::UnicornFixedParam;
     use crate::{interfaces, mempool_raft, storage_raft, transaction_gen, wallet};
     use std::collections::BTreeMap;
-    use tw_chain::crypto::sign_ed25519::{PublicKey, SecretKey, Signature};
-    use tw_chain::primitives::asset::{AssetValues, ItemAsset};
-    use tw_chain::primitives::{
+    use prime::crypto::sign_ed25519::{PublicKey, SecretKey, Signature};
+    use prime::primitives::asset::{AssetValues, ItemAsset};
+    use prime::primitives::{
         asset::{Asset, TokenAmount},
         block::{Block, BlockHeader},
         druid::{DdeValues, DruidExpectation},
         transaction::{OutPoint, Transaction, TxIn, TxOut},
     };
-    use tw_chain::script::{lang::Script, OpCodes, StackEntry};
+    use prime::script::{lang::Script, OpCodes, StackEntry};
 
     pub fn convert_block(old: old::tw_chain::Block) -> Block {
         Block {

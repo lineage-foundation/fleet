@@ -2,7 +2,7 @@ use crate::interfaces::{NodeType, UtxoFetchType, UtxoSet};
 use crate::Response;
 use async_trait::async_trait;
 use std::net::SocketAddr;
-use tw_chain::primitives::transaction::Transaction;
+use prime::primitives::transaction::Transaction;
 
 /// A common trait that can be implemented by nodes as necessary to
 /// build transactions from their local wallets.

@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::time::Duration;
 use tracing::info;
-use tw_chain::primitives::asset::{Asset, TokenAmount};
+use prime::primitives::asset::{Asset, TokenAmount};
 
 type ExtraNodeParamsFilterMap = BTreeMap<String, ExtraNodeParamsFilter>;
 
@@ -750,8 +750,8 @@ fn cfg_upgrade() -> UpgradeCfg {
 }
 
 fn get_expected_last_block_stored() -> BlockStoredInfo {
-    use tw_chain::primitives::transaction::{Transaction, TxIn, TxOut};
-    use tw_chain::script::{lang::Script, StackEntry};
+    use prime::primitives::transaction::{Transaction, TxIn, TxOut};
+    use prime::script::{lang::Script, StackEntry};
 
     BlockStoredInfo {
         block_hash: LAST_BLOCK_BLOCK_HASH.to_owned(),

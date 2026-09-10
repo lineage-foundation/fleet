@@ -40,8 +40,8 @@ use tokio::task::JoinHandle;
 use tracing::error_span;
 use tracing::info;
 use tracing_futures::Instrument;
-use tw_chain::primitives::asset::TokenAmount;
-use tw_chain::primitives::transaction::Transaction;
+use prime::primitives::asset::TokenAmount;
+use prime::primitives::transaction::Transaction;
 
 pub type ArcMinerNode = Arc<Mutex<MinerNode>>;
 pub type ArcMempoolNode = Arc<Mutex<MempoolNode>>;

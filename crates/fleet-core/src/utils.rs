@@ -31,17 +31,17 @@ use tokio::task;
 use tokio::time::Instant;
 use tracing::{info, trace, warn};
 use trust_dns_resolver::TokioAsyncResolver;
-use tw_chain::constants::TOTAL_TOKENS;
-use tw_chain::crypto::sha3_256;
-use tw_chain::crypto::sign_ed25519::{self as sign, PublicKey, SecretKey, Signature};
-use tw_chain::primitives::transaction::GenesisTxHashSpec;
-use tw_chain::primitives::{
+use prime::constants::TOTAL_TOKENS;
+use prime::crypto::sha3_256;
+use prime::crypto::sign_ed25519::{self as sign, PublicKey, SecretKey, Signature};
+use prime::primitives::transaction::GenesisTxHashSpec;
+use prime::primitives::{
     asset::{Asset, TokenAmount},
     block::{build_hex_txs_hash, Block, BlockHeader},
     transaction::{OutPoint, Transaction, TxIn, TxOut},
 };
-use tw_chain::script::{lang::Script, StackEntry};
-use tw_chain::utils::transaction_utils::{
+use prime::script::{lang::Script, StackEntry};
+use prime::utils::transaction_utils::{
     construct_address, construct_tx_core, construct_tx_hash, construct_tx_in_out_signable_hash,
     construct_tx_in_signable_asset_hash, get_fees_with_out_point, get_tx_out_with_out_point,
     get_tx_out_with_out_point_cloned,

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 use tracing::{debug, warn};
-use tw_chain::crypto::sha3_256;
+use prime::crypto::sha3_256;
 
 /// Key serialized into RaftData and process by Raft.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

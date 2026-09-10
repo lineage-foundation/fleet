@@ -10,9 +10,9 @@ use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::net::SocketAddr;
 use tracing::log::{debug, info};
-use tw_chain::primitives::asset::TokenAmount;
-use tw_chain::primitives::block::Block;
-use tw_chain::primitives::transaction::Transaction;
+use prime::primitives::asset::TokenAmount;
+use prime::primitives::block::Block;
+use prime::primitives::transaction::Transaction;
 
 /// Different states of the mining pipeline
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]

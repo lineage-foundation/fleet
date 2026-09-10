@@ -22,8 +22,8 @@ use fleet_core::utils::StringError;
 use fleet_wallet::WalletDbError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tw_chain::primitives::transaction::Transaction;
-use tw_chain::utils::transaction_utils::construct_tx_hash;
+use prime::primitives::transaction::Transaction;
+use prime::utils::transaction_utils::construct_tx_hash;
 use utoipa::ToSchema;
 
 use super::tx_convert::{self, construct_ctx_map, to_transaction, CreateTransaction, JsonSerializedTransaction};
@@ -140,7 +140,7 @@ pub async fn query_transaction_status(
 /// This node's outgoing (constructed-and-sent) transactions, keyed by hash.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct OutgoingTxsResponse {
-    /// `[hash, transaction]` pairs (`tw_chain::primitives::transaction::Transaction`),
+    /// `[hash, transaction]` pairs (`prime::primitives::transaction::Transaction`),
     /// passed through as JSON unchanged, mirroring the legacy embed-as-JSON behaviour.
     #[schema(value_type = Vec<Object>)]
     pub transactions: Value,

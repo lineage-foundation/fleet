@@ -24,15 +24,15 @@ use bincode::deserialize;
 use bytes::Bytes;
 use serde::Serialize;
 use std::collections::BTreeSet;
-use tw_chain::crypto::sign_ed25519 as sign;
-use tw_chain::primitives::asset::{Asset, TokenAmount};
-use tw_chain::primitives::block::Block;
-use tw_chain::primitives::druid::{DdeValues, DruidExpectation};
-use tw_chain::primitives::transaction::{
+use prime::crypto::sign_ed25519 as sign;
+use prime::primitives::asset::{Asset, TokenAmount};
+use prime::primitives::block::Block;
+use prime::primitives::druid::{DdeValues, DruidExpectation};
+use prime::primitives::transaction::{
     GenesisTxHashSpec, OutPoint, Transaction, TxIn, TxOut,
 };
-use tw_chain::script::lang::Script;
-use tw_chain::utils::transaction_utils::{
+use prime::script::lang::Script;
+use prime::utils::transaction_utils::{
     construct_item_create_tx, construct_rb_payments_send_tx, construct_rb_receive_payment_tx,
     construct_tx_core, construct_tx_hash, construct_tx_in_signable_hash, construct_tx_ins_address,
     update_input_signatures, ReceiverInfo,

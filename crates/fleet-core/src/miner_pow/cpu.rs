@@ -1,6 +1,6 @@
 use crate::constants::MINING_DIFFICULTY;
 use crate::miner_pow::{MineError, MinerStatistics, PoWDifficulty, Sha3_256PoWMiner};
-use tw_chain::crypto::sha3_256;
+use prime::crypto::sha3_256;
 
 /// A miner which runs on the CPU.
 #[derive(Copy, Clone, Debug)]

@@ -38,12 +38,12 @@ use std::{
 use tokio::sync::RwLock;
 use tracing::{debug, error, error_span, info, trace, warn};
 use tracing_futures::Instrument;
-use tw_chain::primitives::asset::TokenAmount;
-use tw_chain::primitives::block::Block;
-use tw_chain::primitives::transaction::{GenesisTxHashSpec, Transaction};
-use tw_chain::utils::druid_utils::druid_expectations_are_met;
-use tw_chain::utils::script_utils::{tx_has_valid_create_script, tx_is_valid};
-use tw_chain::utils::transaction_utils::construct_tx_hash;
+use prime::primitives::asset::TokenAmount;
+use prime::primitives::block::Block;
+use prime::primitives::transaction::{GenesisTxHashSpec, Transaction};
+use prime::utils::druid_utils::druid_expectations_are_met;
+use prime::utils::script_utils::{tx_has_valid_create_script, tx_is_valid};
+use prime::utils::transaction_utils::construct_tx_hash;
 
 /// Key for local miner list
 pub const REQUEST_LIST_KEY: &str = "RequestListKey";
@@ -416,7 +416,7 @@ impl MempoolNode {
     /// Only used during tests
     pub fn get_pk_cache(
         &self,
-    ) -> std::collections::HashMap<String, BTreeSet<tw_chain::primitives::transaction::OutPoint>>
+    ) -> std::collections::HashMap<String, BTreeSet<prime::primitives::transaction::OutPoint>>
     {
         self.node_raft.get_committed_utxo_tracked_pk_cache()
     }

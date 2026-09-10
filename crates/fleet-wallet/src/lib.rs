@@ -15,13 +15,13 @@ use std::sync::{Arc, Mutex};
 use std::{error, fmt, io};
 use tokio::task;
 use tracing::{debug, warn};
-use tw_chain::crypto::pbkdf2 as pwhash;
-use tw_chain::crypto::secretbox_chacha20_poly1305 as secretbox;
-use tw_chain::crypto::sign_ed25519 as sign;
-use tw_chain::crypto::sign_ed25519::{PublicKey, SecretKey};
-use tw_chain::primitives::asset::{Asset, TokenAmount};
-use tw_chain::primitives::transaction::{OutPoint, Transaction, TxConstructor, TxIn, TxOut};
-use tw_chain::utils::transaction_utils::{
+use prime::crypto::pbkdf2 as pwhash;
+use prime::crypto::secretbox_chacha20_poly1305 as secretbox;
+use prime::crypto::sign_ed25519 as sign;
+use prime::crypto::sign_ed25519::{PublicKey, SecretKey};
+use prime::primitives::asset::{Asset, TokenAmount};
+use prime::primitives::transaction::{OutPoint, Transaction, TxConstructor, TxIn, TxOut};
+use prime::utils::transaction_utils::{
     construct_address_for, construct_payment_tx_ins, construct_tx_hash,
     construct_tx_in_signable_hash,
 };
@@ -1448,7 +1448,7 @@ pub fn tx_constructor_from_prev_out(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tw_chain::utils::transaction_utils::construct_address;
+    use prime::utils::transaction_utils::construct_address;
 
     #[test]
     /// Creating a valid payment address
