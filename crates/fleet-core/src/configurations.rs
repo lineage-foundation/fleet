@@ -212,8 +212,6 @@ pub struct MempoolNodeConfig {
     pub utxo_re_align_block_modulo: Option<u64>,
     /// Restore backup if true
     pub backup_restore: Option<bool>,
-    /// Enable trigger messages to reset the pipeline when it gets stuck
-    pub enable_trigger_messages_pipeline_reset: Option<bool>,
     /// Enable API-key based whitelisting for miners
     pub mempool_miner_whitelist: MinerWhitelist,
     /// Limit for the number of peers this node can have

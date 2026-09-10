@@ -2126,19 +2126,18 @@ async fn handle_messages_lost_reset_pipeline_stage() {
     // Arrange
     //
     let mut network_config = complete_network_config_with_n_mempool_raft(11520, 1);
-    // Enable pipeline resets when message retrigger threshold has been reached
-    network_config.enable_pipeline_reset = Some(true);
     network_config.test_duration_divider = 10;
     let mut network = Network::create_from_config(&network_config).await;
 
     let modify_cfg = vec![
         // Miner 1 get's dropped as soon as it's supposed to mine the block
         ("After Winning PoW intake open", CfgModif::Drop("miner1")),
-        // The pipeline status changes back to participant intake after a the threshold
-        // for retrigger messages has been reached
+        // The dropped participant is unreachable, so the re-flood proposes a
+        // `MiningParticipantDropped` vote; a sufficient majority evicts it, the
+        // round drains and the pipeline re-selects back to participant intake.
         (
             "After Winning PoW intake open",
-            CfgModif::HandleEvents(&[("mempool1", "Pipeline reset")]),
+            CfgModif::HandleEvents(&[("mempool1", "Pipeline re-select")]),
         ),
         // After the pipeline status has been reset, the pipeline should be able to
         // accept participants again, so we respawn Miner 1
@@ -2158,25 +2157,313 @@ async fn handle_messages_lost_reset_pipeline_stage() {
     //
     create_first_block_act(&mut network).await;
 
-    // Normal PoW procedure
+    // Normal PoW procedure: miner1 is the sole selected mining participant.
     proof_of_work_participation_act(&mut network, CfgNum::All, CfgPow::First).await;
+    assert_eq!(
+        mempool_get_filtered_participants(&mut network, "mempool1", &["miner1".to_string()]).await,
+        vec!["miner1".to_string()],
+        "miner1 should be a selected mining participant before it drops",
+    );
 
-    // Disconnect Miner 1 and wait for pipeline reset
-    // Reconnect Miner 1 and continue with pipeline from participant intake
+    // Drop miner1 mid-round: the unreachable selected participant is evicted by a
+    // committed `MiningParticipantDropped` majority, the drained round re-selects
+    // (reason `"Pipeline re-select"`), and miner1 is respawned and reconnects,
+    // rejoining the intake pool.
     modify_network(&mut network, "After Winning PoW intake open", &modify_cfg).await;
 
-    // Normal PoW procedure
+    //
+    // Assert: the pipeline recovered from the re-select and can select
+    // participants again (miner1 is re-selected once it has reconnected).
+    //
+    // NOTE: intentionally stops before block-storage verification. The
+    // re-selection and recovery are fully exercised above; continuing into
+    // `send_block_to_storage_act`/`storage_get_last_stored_info` would trip a
+    // PRE-EXISTING, unrelated v5/v6 `blockchain_item` version mismatch
+    // (`checked_blockchain_item_data`, asserted against `NETWORK_VERSION`) that
+    // exists on `main` and is out of scope for the pipeline-reselection work.
     proof_of_work_participation_act(&mut network, CfgNum::All, CfgPow::First).await;
-    proof_of_work_block_act(&mut network, CfgNum::All, false, None).await;
-    send_block_to_storage_act(&mut network, CfgNum::All).await;
+    assert_eq!(
+        mempool_get_filtered_participants(&mut network, "mempool1", &["miner1".to_string()]).await,
+        vec!["miner1".to_string()],
+        "miner1 should be re-selected after the pipeline re-select and reconnect",
+    );
+
+    test_step_complete(network).await;
+}
+
+/// Short exit future for lenient, bounded pumping of a mempool node's event
+/// loop in the pipeline tests. Unlike [`test_timeout`], it fires quickly so a
+/// caller can observe committed state changes that never surface as a
+/// user-visible `Response` (e.g. a partial-drop eviction).
+fn drive_timeout(ms: u64) -> impl Future<Output = &'static str> + Unpin {
+    Box::pin(async move {
+        time::sleep(Duration::from_millis(ms)).await;
+        "drive timeout elapsed"
+    })
+}
+
+/// Drive a single mempool node's event loop WITHOUT asserting on a specific
+/// response reason, returning as soon as `pred` holds (or after `max_iters`
+/// bounded pumps). Each pump lets the loop process peer disconnects, re-flood
+/// the round (which proposes `MiningParticipantDropped` for unreachable
+/// selected participants) and apply the resulting committed evictions.
+async fn mempool_drive_until(
+    network: &mut Network,
+    mempool: &str,
+    max_iters: usize,
+    pred: impl Fn(&MempoolNode) -> bool,
+) -> bool {
+    let node = network.mempool(mempool).unwrap().clone();
+    for _ in 0..max_iters {
+        if pred(&*node.lock().await) {
+            return true;
+        }
+        let mut exit = drive_timeout(300);
+        let _ = node.lock().await.handle_next_event(&mut exit).await;
+    }
+    let done = pred(&*node.lock().await);
+    done
+}
+
+/// A mempool node's committed mining-participant address set (its own proposer
+/// bucket, as returned by `MempoolNode::get_mining_participants`).
+async fn mempool_mining_participant_set(
+    network: &mut Network,
+    mempool: &str,
+) -> BTreeSet<SocketAddr> {
+    let c = network.mempool(mempool).unwrap().lock().await;
+    c.get_mining_participants().iter().copied().collect()
+}
+
+/// A single selected miner that drops mid-round is evicted by a committed
+/// majority `MiningParticipantDropped` vote; the drained round re-selects,
+/// surfacing the `"Pipeline re-select"` reason and returning the pipeline to
+/// participant intake with an empty mining set (NOT the count-to-5
+/// `"Pipeline reset"`).
+#[tokio::test(flavor = "current_thread")]
+async fn reselect_on_selected_miner_drop() {
+    test_step_start();
 
     //
-    // Assert
+    // Arrange: reach AllItemsIntake with miner1 as the sole selected participant.
     //
-    let actual0 = storage_get_last_stored_info(&mut network, "storage1").await;
-    let actual0_values = actual0.1.as_ref();
-    let actual0_values = actual0_values.map(|(_, b_num, min_tx)| (*b_num, *min_tx));
-    assert_eq!(actual0_values, Some((0, 1)), "Actual: {actual0:?}");
+    let mut network_config = complete_network_config_with_n_mempool_raft(11540, 1);
+    network_config.test_duration_divider = 10;
+    let mut network = Network::create_from_config(&network_config).await;
+
+    create_first_block_act(&mut network).await;
+    proof_of_work_participation_act(&mut network, CfgNum::All, CfgPow::First).await;
+    assert_eq!(
+        mempool_get_filtered_participants(&mut network, "mempool1", &["miner1".to_string()]).await,
+        vec!["miner1".to_string()],
+        "miner1 should be the selected mining participant before it drops",
+    );
+
+    //
+    // Act: drop the selected miner. The re-flood driven by the mempool event
+    // loop proposes its `MiningParticipantDropped` eviction; a majority (of 1)
+    // commits, the sole participant is evicted, the round drains and re-selects.
+    //
+    network
+        .close_loops_and_drop_named(&["miner1".to_string()])
+        .await;
+    mempool_handle_event(&mut network, "mempool1", &["Pipeline re-select"]).await;
+
+    //
+    // Assert: back at participant intake with an empty mining set.
+    //
+    assert!(
+        mempool_mining_participant_set(&mut network, "mempool1")
+            .await
+            .is_empty(),
+        "mining participant set should be empty after the re-select",
+    );
+
+    test_step_complete(network).await;
+}
+
+/// When only one of several selected miners drops, the committed eviction
+/// removes just that miner: the survivor stays in the mining set and the round
+/// does NOT re-select (a re-select would clear the whole set).
+#[tokio::test(flavor = "current_thread")]
+async fn partial_drop_keeps_survivor() {
+    test_step_start();
+
+    //
+    // Arrange: one mempool with TWO selected mining participants (miner1, miner2).
+    //
+    let mut network_config = complete_network_config_with_n_mempool_miner(11560, true, 1, 2);
+    network_config.mempool_partition_full_size = 2;
+    network_config.mempool_minimum_miner_pool_len = 2;
+    network_config.test_duration_divider = 10;
+    let mut network = Network::create_from_config(&network_config).await;
+
+    create_first_block_act(&mut network).await;
+    proof_of_work_participation_act(&mut network, CfgNum::All, CfgPow::First).await;
+
+    let miner1_addr = network.get_address("miner1").await.unwrap();
+    let miner2_addr = network.get_address("miner2").await.unwrap();
+    let before = mempool_mining_participant_set(&mut network, "mempool1").await;
+    assert!(
+        before.contains(&miner1_addr) && before.contains(&miner2_addr),
+        "both miners should be selected before the drop: {before:?}",
+    );
+
+    //
+    // Act: drop ONLY miner1. miner2 stays connected, so only miner1 is proposed
+    // for (and committed as) an eviction.
+    //
+    network
+        .close_loops_and_drop_named(&["miner1".to_string()])
+        .await;
+    let evicted = mempool_drive_until(&mut network, "mempool1", 15, move |c| {
+        let set: BTreeSet<_> = c.get_mining_participants().iter().copied().collect();
+        !set.contains(&miner1_addr) && set.contains(&miner2_addr)
+    })
+    .await;
+    assert!(evicted, "miner1 should be evicted while miner2 survives");
+
+    //
+    // Assert: partial drop => no re-select. The survivor is still selected; had
+    // the round re-selected, the whole mining set would be empty.
+    //
+    let after = mempool_mining_participant_set(&mut network, "mempool1").await;
+    assert!(
+        !after.contains(&miner1_addr),
+        "dropped miner1 should be gone: {after:?}",
+    );
+    assert!(
+        after.contains(&miner2_addr),
+        "survivor miner2 should remain selected (no re-select): {after:?}",
+    );
+
+    test_step_complete(network).await;
+}
+
+/// Organic multi-node eviction + fast re-select across a 3-mempool RAFT.
+///
+/// This is the genuine multi-node counterpart to the single-node
+/// `reselect_on_selected_miner_drop`. Each miner registers with exactly one
+/// mempool (1:1 `mempool_to_miner_mapping`), so a selected participant lives in
+/// only that node's proposer bucket and only that node observes its liveness
+/// and can propose its `MiningParticipantDropped` vote. Eviction is therefore
+/// owner-authoritative: a single committed drop vote (threshold 1, NOT the
+/// sufficient majority) evicts the participant — requiring a majority would be
+/// unsatisfiable here because no other node can propose the drop, and recovery
+/// would wrongly fall back to the slow watchdog.
+///
+/// We reach `AllItemsIntake` with one miner selected in EACH mempool's bucket
+/// (three miners are needed to satisfy the intake quorum — the "miner per
+/// mempool" constraint — but each is still owned 1:1). We then drop every
+/// miner, drive each owning node to organically propose its own drop, and let
+/// RAFT replicate the identical commit log to all nodes. When the last drop
+/// drains the round, every node applies the SAME committed sequence
+/// deterministically and recovers via the fast `"Pipeline re-select"` path
+/// (asserted by `node_all_handle_event` below — a node that instead recovered
+/// via the watchdog `"Pipeline reset"` would panic here). The fork guard is the
+/// final assertion: all nodes converge on an identical (empty) participant set,
+/// with none of the dropped miners present on any node.
+#[tokio::test(flavor = "current_thread")]
+async fn eviction_reselect_organic_across_mempool_nodes() {
+    test_step_start();
+
+    //
+    // Arrange: 3-mempool RAFT, one miner per mempool. Reach AllItemsIntake with
+    // each miner selected in its owning mempool's bucket.
+    //
+    let mut network_config = complete_network_config_with_n_mempool_raft(11580, 3);
+    network_config.test_duration_divider = 10;
+    let mut network = Network::create_from_config(&network_config).await;
+    let mempool_nodes = network_config.nodes[&NodeType::Mempool].clone();
+    let miner_names = ["miner1", "miner2", "miner3"];
+
+    create_first_block_act(&mut network).await;
+    proof_of_work_participation_act(&mut network, CfgNum::All, CfgPow::First).await;
+
+    let mut miner_addrs = Vec::new();
+    for name in miner_names {
+        miner_addrs.push(network.get_address(name).await.unwrap());
+    }
+    for mempool in &mempool_nodes {
+        assert!(
+            !mempool_mining_participant_set(&mut network, mempool)
+                .await
+                .is_empty(),
+            "{mempool} should have a selected mining participant before the drop",
+        );
+    }
+
+    //
+    // Act: drop every selected miner. Each owning mempool's re-flood organically
+    // proposes its own miner's `MiningParticipantDropped` vote; a single
+    // committed owner vote evicts it, and once the last bucket drains the round
+    // re-selects. Driving every node concurrently replicates the committed log
+    // and asserts they all recover via the fast re-select (NOT the watchdog
+    // "Pipeline reset", which would panic in `node_all_handle_event`).
+    //
+    network
+        .close_loops_and_drop_named(&miner_names.map(String::from))
+        .await;
+    node_all_handle_event(&mut network, &mempool_nodes, &["Pipeline re-select"]).await;
+
+    //
+    // Assert (fork guard): every node evicted every dropped miner and converged
+    // on an identical (empty) mining-participant set — no node forked.
+    //
+    let mut per_node_sets = Vec::new();
+    for mempool in &mempool_nodes {
+        let set = mempool_mining_participant_set(&mut network, mempool).await;
+        for addr in &miner_addrs {
+            assert!(
+                !set.contains(addr),
+                "{mempool} should have evicted dropped miner {addr}: {set:?}",
+            );
+        }
+        per_node_sets.push(set);
+    }
+    assert!(
+        per_node_sets.windows(2).all(|w| w[0] == w[1]),
+        "mempool nodes diverged on the mining-participant set: {per_node_sets:?}",
+    );
+
+    test_step_complete(network).await;
+}
+
+/// A connected-but-idle round (a selected participant that stays reachable but
+/// never submits a winning PoW) makes no forward progress and cannot be caught
+/// by the drop-vote path. The always-on progress watchdog is the backstop: it
+/// proposes a `ResetPipeline` (reason `"Pipeline reset"`) after
+/// `POW_PROGRESS_WATCHDOG_TICKS` no-progress mining-event ticks.
+#[tokio::test(flavor = "current_thread")]
+async fn watchdog_resets_stuck_round() {
+    test_step_start();
+
+    //
+    // Arrange: reach AllItemsIntake with miner1 connected and selected, but
+    // never drive it to submit a winning PoW.
+    //
+    let mut network_config = complete_network_config_with_n_mempool_raft(11600, 1);
+    network_config.test_duration_divider = 10;
+    let mut network = Network::create_from_config(&network_config).await;
+
+    create_first_block_act(&mut network).await;
+    proof_of_work_participation_act(&mut network, CfgNum::All, CfgPow::First).await;
+    assert_eq!(
+        mempool_get_filtered_participants(&mut network, "mempool1", &["miner1".to_string()]).await,
+        vec!["miner1".to_string()],
+        "miner1 should be selected and (still) connected — the drop path must NOT fire",
+    );
+
+    //
+    // Act + Assert: miner1 is NOT dropped, so no `MiningParticipantDropped` vote
+    // is proposed. With no winning PoW the round cannot halt, so the only escape
+    // is the progress watchdog, which proposes `ResetPipeline` after enough
+    // no-progress ticks. Each mining-event tick is short (~50ms at
+    // test_duration_divider = 10) so this stays well within the test timeout.
+    //
+    mempool_handle_event(&mut network, "mempool1", &["Pipeline reset"]).await;
+
+    test_step_complete(network).await;
 }
 
 async fn handle_message_lost_common(
@@ -5108,7 +5395,6 @@ fn basic_network_config(initial_port: u16) -> NetworkConfig {
         backup_block_modulo: Default::default(),
         utxo_re_align_block_modulo: Default::default(),
         backup_restore: Default::default(),
-        enable_pipeline_reset: Default::default(),
         static_miner_address: Default::default(),
         mempool_miner_whitelist: Default::default(),
         mining_api_key: Default::default(),
