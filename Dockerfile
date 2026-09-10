@@ -48,6 +48,8 @@ COPY crates/fleet-integration/Cargo.toml /lineage/crates/fleet-integration/Cargo
 COPY crates/fleet-integration/src /lineage/crates/fleet-integration/src
 COPY crates/fleet-core/Cargo.toml /lineage/crates/fleet-core/Cargo.toml
 COPY crates/fleet-core/src /lineage/crates/fleet-core/src
+COPY crates/prime/Cargo.toml /lineage/crates/prime/Cargo.toml
+COPY crates/prime/src /lineage/crates/prime/src
 COPY crates/fleet-api/Cargo.toml /lineage/crates/fleet-api/Cargo.toml
 COPY crates/fleet-api/src /lineage/crates/fleet-api/src
 COPY crates/fleet-node-common/Cargo.toml /lineage/crates/fleet-node-common/Cargo.toml
@@ -89,6 +91,8 @@ COPY crates/fleet-integration/Cargo.toml /lineage/crates/fleet-integration/Cargo
 COPY crates/fleet-integration/src /lineage/crates/fleet-integration/src
 COPY crates/fleet-core/Cargo.toml /lineage/crates/fleet-core/Cargo.toml
 COPY crates/fleet-core/src /lineage/crates/fleet-core/src
+COPY crates/prime/Cargo.toml /lineage/crates/prime/Cargo.toml
+COPY crates/prime/src /lineage/crates/prime/src
 COPY crates/fleet-api/Cargo.toml /lineage/crates/fleet-api/Cargo.toml
 COPY crates/fleet-api/src /lineage/crates/fleet-api/src
 COPY crates/fleet-node-common/Cargo.toml /lineage/crates/fleet-node-common/Cargo.toml
