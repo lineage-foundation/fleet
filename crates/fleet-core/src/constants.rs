@@ -57,7 +57,7 @@ pub const DB_COL_BC_V0_2_0: &str = "block_chain_v0.2.0";
 /// Version columns: mapping of blockchain-item column family to network version
 pub const DB_COLS_BC: &[(&str, u32)] = &[
     // (blockchain version, network version)
-    (DB_COL_BC_NOW, 5),
+    (DB_COL_BC_NOW, 6),
     (DB_COL_BC_V0_6_0, 4),
     (DB_COL_BC_V0_5_0, 3),
     (DB_COL_BC_V0_4_0, 2),
