@@ -40,8 +40,13 @@ pub struct ItemCreated {
 ///
 /// `genesis_hash` is the create transaction's hash (a caller-supplied lookup key, not
 /// derived here); `block_num` is the block the transaction was included in. Returns
-/// `Err` when `tx` has no `Asset::Item` output, i.e. it isn't an item genesis.
+/// `Err` when `tx` has no `Asset::Item` output, i.e. it isn't an item genesis, or when
+/// `tx` is an item transfer rather than the genesis create transaction.
 pub fn item_info_from_tx(genesis_hash: &str, tx: &Transaction, block_num: u64) -> Result<ItemInfoResponse, ApiProblem> {
+    if !tx.is_create_tx() {
+        return Err(ApiProblem::not_found("transaction is not an item genesis"));
+    }
+
     let item_out = tx
         .outputs
         .iter()
@@ -72,8 +77,8 @@ mod tests {
 
     use super::item_info_from_tx;
 
-    #[tokio::test]
-    async fn item_info_from_tx_extracts_fields() {
+    #[test]
+    fn item_info_from_tx_extracts_fields() {
         let (public_key, secret_key) = sign::gen_keypair();
         let address = construct_address(&public_key);
 
@@ -98,8 +103,8 @@ mod tests {
         assert_eq!(result.created.block_num, 7);
     }
 
-    #[tokio::test]
-    async fn item_info_from_tx_no_metadata_is_null() {
+    #[test]
+    fn item_info_from_tx_no_metadata_is_null() {
         let (public_key, secret_key) = sign::gen_keypair();
 
         let tx = construct_item_create_tx(
@@ -117,8 +122,8 @@ mod tests {
         assert_eq!(result.metadata, None);
     }
 
-    #[tokio::test]
-    async fn item_info_from_tx_rejects_non_item_tx() {
+    #[test]
+    fn item_info_from_tx_rejects_non_item_tx() {
         use prime::primitives::asset::{Asset, TokenAmount};
         use prime::primitives::transaction::{Transaction, TxOut};
 
@@ -137,5 +142,36 @@ mod tests {
         let result = item_info_from_tx("some_tx_hash", &tx, 1);
 
         assert!(result.is_err(), "expected a non-item tx to be rejected");
+    }
+
+    #[test]
+    fn item_info_from_tx_rejects_non_create_item_tx() {
+        use prime::primitives::asset::Asset;
+        use prime::primitives::transaction::{OutPoint, Transaction, TxIn, TxOut};
+
+        // Mirrors the transfer output shape built by `construct_rb_receive_payment_tx`:
+        // an already-minted item being moved, referencing a previous output rather
+        // than creating one.
+        let tx = Transaction {
+            inputs: vec![TxIn {
+                previous_out: Some(OutPoint {
+                    t_hash: "genesis_tx_hash".to_owned(),
+                    n: 0,
+                }),
+                script_signature: Default::default(),
+            }],
+            outputs: vec![TxOut {
+                value: Asset::item(1, Some("genesis_tx_hash".to_owned()), None),
+                locktime: 0,
+                script_public_key: Some("recipient_address".to_owned()),
+            }],
+            version: 1,
+            fees: vec![],
+            druid_info: None,
+        };
+
+        let result = item_info_from_tx("genesis_tx_hash", &tx, 1);
+
+        assert!(result.is_err(), "expected a non-create item tx to be rejected");
     }
 }
