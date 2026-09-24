@@ -1,7 +1,7 @@
 //! Test suite for the network functions.
 
 use fleet::asert::{calculate_asert_target, CompactTarget};
-use fleet::block_pipeline::MiningPipelineInfo;
+use fleet::block_pipeline::{MiningPipelineInfo, MiningPipelineStatus};
 use fleet::configurations::{
     DbMode, MempoolNodeConfig, MempoolNodeSharedConfig, MinerWhitelist, NodeSpec, TxOutSpec,
     UserAutoGenTxSetup, UtxoSetSpec, WalletTxSpec,
@@ -2089,6 +2089,179 @@ async fn handle_message_lost_restart_block_stored_raft_1_node_common(
         ]),
     )];
     handle_message_lost_common(network_config, &modify_cfg).await
+}
+
+/// A block mined and awaiting the storage handoff (pipeline `Halted`) must
+/// survive a mempool restart. `current_mined_block` is not part of the RAFT
+/// snapshot, so it is persisted separately and restored on load; without that, a
+/// restart while `Halted` loses the block and the restarted node re-sends an
+/// empty block to storage forever (the chain wedges — the public testnet did
+/// exactly this).
+#[tokio::test(flavor = "current_thread")]
+async fn halted_mined_block_survives_mempool_restart_raft_1_node() {
+    test_step_start();
+
+    let mut network_config = complete_network_config_with_n_mempool_raft(10495, 1);
+    network_config.in_memory_db = false;
+    remove_all_node_dbs(&network_config);
+    let mut network = Network::create_from_config(&network_config).await;
+
+    // Drive the first block through PoW so the mempool mines it and parks in
+    // `Halted`, holding the finalized block in `current_mined_block` awaiting the
+    // storage handoff.
+    create_first_block_act(&mut network).await;
+    proof_of_work_act(&mut network, CfgPow::First, CfgNum::All, false, None).await;
+
+    assert_eq!(
+        mempool_mining_pipeline_status(&mut network, "mempool1").await,
+        MiningPipelineStatus::Halted,
+        "mempool should be Halted holding the mined block before restart",
+    );
+    let mined_before = mempool_current_mined_block_is_some(&mut network, "mempool1").await;
+    assert!(
+        mined_before,
+        "precondition: mempool must hold a mined block in Halted before restart",
+    );
+
+    // Restart the mempool, preserving its on-disk DB.
+    network
+        .close_loops_and_drop_named(&["mempool1".to_string()])
+        .await;
+    network.re_spawn_nodes_named(&["mempool1".to_string()]).await;
+    network
+        .send_startup_requests_named(&["mempool1".to_string()])
+        .await;
+
+    // The in-flight mined block must have been restored from the DB, so the node
+    // can complete the storage handoff instead of sending an empty block.
+    let mined_after = mempool_current_mined_block_is_some(&mut network, "mempool1").await;
+    assert!(
+        mined_after,
+        "mined block must be restored after restart so the storage handoff can complete",
+    );
+
+    test_step_complete(network).await;
+}
+
+/// A mempool that comes up `Halted` but has lost its in-flight block
+/// (`current_mined_block == None`) while the chain is deeper than storage
+/// (`current_block_num == Some(N)`, storage tip `N - 1`) is wedged: storage keeps
+/// re-sending its confirmation for `N - 1`, which the `is_current_block` guard
+/// drops, so the node can never rebuild block `N` and re-sends an empty block to
+/// storage forever (the public testnet did exactly this).
+///
+/// The recovery path detects this and re-bootstraps block `N` from storage's
+/// re-sent confirmation (re-seed previous hash -> regenerate -> reopen intake) via
+/// a RAFT-committed item, WITHOUT re-applying block `N - 1`'s UTXO/issuance (which
+/// was applied when the node first advanced to `N`).
+///
+/// RED baseline: with the recovery removed, the injected `N - 1` confirmation is
+/// dropped ("Ignore invalid or outdated block stored info"), no committed item is
+/// produced, and the node stays `Halted` — the `"Halted block recovery"` event
+/// below never arrives.
+#[tokio::test(flavor = "current_thread")]
+async fn recover_halted_lost_block_raft_1_node() {
+    test_step_start();
+
+    //
+    // Arrange
+    //
+    let mut network_config = complete_network_config_with_n_mempool_raft(10497, 1);
+    network_config.test_duration_divider = 10;
+    let mut network = Network::create_from_config(&network_config).await;
+    let mempool_nodes = network_config.nodes[&NodeType::Mempool].clone();
+    let storage_nodes = network_config.nodes[&NodeType::Storage].clone();
+
+    // Mine and store genesis (block 0), advance to block 1 and mine it, so the node
+    // parks `Halted` at block 1 holding the finalized block while storage tip is 0.
+    create_first_block_act(&mut network).await;
+    proof_of_work_act(&mut network, CfgPow::First, CfgNum::All, false, None).await;
+    send_block_to_storage_act(&mut network, CfgNum::All).await;
+    create_block_act(&mut network, Cfg::All, CfgNum::All).await;
+    proof_of_work_act(&mut network, CfgPow::Parallel, CfgNum::All, false, None).await;
+
+    assert_eq!(
+        mempool_mining_pipeline_status(&mut network, "mempool1").await,
+        MiningPipelineStatus::Halted,
+        "precondition: mempool must be Halted holding the mined block 1",
+    );
+    assert_eq!(
+        mempool_committed_current_block_num(&mut network, "mempool1").await,
+        Some(1),
+        "precondition: mempool must be on block 1",
+    );
+    assert!(
+        mempool_current_mined_block_is_some(&mut network, "mempool1").await,
+        "precondition: mempool must hold the mined block before it is lost",
+    );
+    assert_eq!(
+        storage_get_last_block_stored(&mut network, "storage1")
+            .await
+            .map(|b| b.block_num),
+        Some(0),
+        "precondition: storage tip must be block 0 (block 1 never stored)",
+    );
+
+    //
+    // Act
+    //
+
+    // Force the lost-block state: Halted at block 1 but the in-flight block is gone.
+    mempool_test_clear_current_mined_block(&mut network, "mempool1").await;
+    assert!(
+        !mempool_current_mined_block_is_some(&mut network, "mempool1").await,
+        "the in-flight mined block must be cleared to reproduce the wedge",
+    );
+
+    // Storage re-sends its confirmation for block 0 (N - 1); the node re-bootstraps
+    // block 1 through the RAFT-committed recovery item.
+    storage_all_send_stored_block(&mut network, &storage_nodes).await;
+    mempool_all_handle_event(&mut network, &mempool_nodes, "Received block stored").await;
+    node_all_handle_event(&mut network, &mempool_nodes, &["Halted block recovery"]).await;
+
+    //
+    // Assert
+    //
+
+    // Re-bootstrapped: left Halted, rebuilt the block-1 template, still on block 1.
+    assert_ne!(
+        mempool_mining_pipeline_status(&mut network, "mempool1").await,
+        MiningPipelineStatus::Halted,
+        "recovery must re-open intake so the block can be re-mined",
+    );
+    assert!(
+        mempool_current_mining_block(&mut network, "mempool1")
+            .await
+            .is_some(),
+        "recovery must rebuild the block-1 template",
+    );
+    assert_eq!(
+        mempool_committed_current_block_num(&mut network, "mempool1").await,
+        Some(1),
+        "recovery must regenerate block 1, not advance past it",
+    );
+
+    // The rebuilt block-1 template must chain onto storage's confirmed block 0: this
+    // is the previous hash re-seeded from storage's re-sent confirmation, the only
+    // source of block 0's hash after it was consumed generating the lost block.
+    // (Crucially, `apply_ready_block_stored_info` was NOT run, so block 0's UTXO /
+    // issuance are not re-applied and the block number is not advanced.)
+    let block0_hash = storage_get_last_block_stored(&mut network, "storage1")
+        .await
+        .map(|b| b.block_hash);
+    assert_eq!(
+        mempool_current_mining_block(&mut network, "mempool1")
+            .await
+            .and_then(|b| b.header.previous_hash),
+        block0_hash,
+        "recovery must re-seed the previous hash from storage's block-0 confirmation",
+    );
+
+    // Intake is re-opened for block 1, so mining resumes on the standard path
+    // (intake -> PoW -> pipeline halted -> storage handoff -> advance), which is
+    // already exercised by the other block-flow tests.
+
+    test_step_complete(network).await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -4258,6 +4431,24 @@ async fn mempool_current_mining_block(network: &mut Network, mempool: &str) -> O
 async fn mempool_committed_current_block_num(network: &mut Network, mempool: &str) -> Option<u64> {
     let c = network.mempool(mempool).unwrap().lock().await;
     c.get_committed_current_block_num()
+}
+
+async fn mempool_mining_pipeline_status(
+    network: &mut Network,
+    mempool: &str,
+) -> MiningPipelineStatus {
+    let c = network.mempool(mempool).unwrap().lock().await;
+    c.get_mining_pipeline_status().clone()
+}
+
+async fn mempool_current_mined_block_is_some(network: &mut Network, mempool: &str) -> bool {
+    let c = network.mempool(mempool).unwrap().lock().await;
+    c.get_current_mined_block().is_some()
+}
+
+async fn mempool_test_clear_current_mined_block(network: &mut Network, mempool: &str) {
+    let mut c = network.mempool(mempool).unwrap().lock().await;
+    c.test_clear_current_mined_block();
 }
 
 async fn mempool_all_committed_current_block_num(
