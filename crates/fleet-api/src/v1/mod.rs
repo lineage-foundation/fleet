@@ -7,6 +7,7 @@ pub mod blocks;
 pub mod debug;
 pub mod difficulty;
 pub mod donations;
+pub mod item_info;
 pub mod items;
 pub mod mining;
 pub mod payments;
