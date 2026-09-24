@@ -2,9 +2,11 @@
 //! plus the storage node's `GET /v1/items/{genesis_hash}` handler built on it.
 //!
 //! `item_info_from_tx` turns a stored genesis create-item transaction into the typed
-//! response `/v1/items/{genesis_hash}`-style handlers (storage, mempool/user proxy)
-//! hand back to callers. It's read-side only: it doesn't touch `tx_is_valid` or the
-//! on-chain item model, it just projects fields off an already-validated tx.
+//! response the `/v1/items/{genesis_hash}` handler hands back to callers. Only the
+//! storage node serves it today (it holds the historical create transaction); a
+//! mempool/user proxy to storage is a planned follow-up. It's read-side only: it
+//! doesn't touch `tx_is_valid` or the on-chain item model, it just projects fields
+//! off an already-validated tx.
 
 use axum::extract::{Path, State};
 use axum::Json;
@@ -81,7 +83,8 @@ pub fn item_info_from_tx(genesis_hash: &str, tx: &Transaction, block_num: u64) -
 /// The lookup is a direct DB read keyed on `genesis_hash` (the same raw-key read
 /// `get_blockchain_entry` uses), so a later transfer of the item has no bearing on
 /// this: the entry stored under `genesis_hash` is always the create transaction.
-/// Shared by every node that carries a blockchain DB (storage, user).
+/// Reads from the node's blockchain DB — currently the storage node; a future
+/// mempool/user proxy would fetch the same create transaction from storage.
 fn read_item_info(state: &ApiState, genesis_hash: &str) -> Result<ItemInfoResponse, ApiProblem> {
     let db = state
         .db
@@ -106,8 +109,8 @@ fn read_item_info(state: &ApiState, genesis_hash: &str) -> Result<ItemInfoRespon
 
 /// Get genesis facts for a single item, by its create transaction's hash.
 ///
-/// A direct read of this node's blockchain DB; mounted on the nodes that carry one
-/// (storage, user).
+/// A direct read of the storage node's blockchain DB, where this endpoint is mounted.
+/// (A mempool/user proxy to storage is a planned follow-up.)
 #[utoipa::path(
     get,
     path = "/v1/items/{genesis_hash}",
