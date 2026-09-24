@@ -25,6 +25,8 @@ use crate::v1::difficulty::DifficultyTarget;
 #[allow(unused_imports)]
 use crate::v1::donations::{__path_post_donation_request, post_donation_request, DonationRequest};
 #[allow(unused_imports)]
+use crate::v1::item_info::{__path_get_item_info_storage, get_item_info_storage, ItemCreated, ItemInfoResponse};
+#[allow(unused_imports)]
 use crate::v1::items::{
     __path_post_create_item, post_create_item, CreateItemAcceptedResponse, CreateItemRequest, CreateItemResponse,
 };
@@ -91,6 +93,7 @@ use crate::v1::wallet::{
         post_running_total_refresh,
         get_current_block,
         post_create_item,
+        get_item_info_storage,
         post_payment,
         post_donation_request,
     ),
@@ -130,6 +133,8 @@ use crate::v1::wallet::{
         CreateItemRequest,
         CreateItemResponse,
         CreateItemAcceptedResponse,
+        ItemInfoResponse,
+        ItemCreated,
         PaymentKind,
         PaymentRequest,
         PaymentAcceptedResponse,
@@ -196,6 +201,7 @@ mod tests {
                 "/v1/debug",
                 "/v1/donation-requests",
                 "/v1/items",
+                "/v1/items/{genesis_hash}",
                 "/v1/mining/current-block",
                 "/v1/payments",
                 "/v1/supply",
