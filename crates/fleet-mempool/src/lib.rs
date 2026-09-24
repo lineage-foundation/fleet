@@ -51,6 +51,10 @@ pub const USER_NOTIFY_LIST_KEY: &str = "UserNotifyListKey";
 pub const POW_RANDOM_NUM_KEY: &str = "PowRandomNumKey";
 pub const POW_PREV_RANDOM_NUM_KEY: &str = "PowPreviousRandomNumKey";
 pub const RAFT_KEY_RUN: &str = "RaftKeyRun";
+/// The block mined and awaiting the storage handoff. Persisted so a restart
+/// while the pipeline is `Halted` does not lose the in-flight block (which would
+/// leave the node re-sending an empty block to storage forever).
+pub const CURRENT_MINED_BLOCK_KEY: &str = "CurrentMinedBlockKey";
 
 /// Database columns
 pub const DB_COL_INTERNAL: &str = "internal";
@@ -326,6 +330,12 @@ impl MempoolNode {
         &self.current_mined_block
     }
 
+    /// Drop the in-flight mined block to reproduce a `Halted` node that lost it
+    /// (e.g. a pre-persistence restart) without needing a deep-chain snapshot. (Test only)
+    pub fn test_clear_current_mined_block(&mut self) {
+        self.current_mined_block = None;
+    }
+
     /// Injects a new event into mempool node
     pub fn inject_next_event(
         &self,
@@ -521,6 +531,11 @@ impl MempoolNode {
     /// Get mining participants selected
     pub fn get_mining_participants(&self) -> &Participants {
         self.node_raft.get_mining_participants()
+    }
+
+    /// Returns the current mining pipeline status from the node_raft
+    pub fn get_mining_pipeline_status(&self) -> &MiningPipelineStatus {
+        self.node_raft.get_mining_pipeline_status()
     }
 
     ///Returns last generated block number from the node_raft
@@ -1024,6 +1039,16 @@ impl MempoolNode {
                 Some(Ok(Response {
                     success: true,
                     reason: "Block shutdown".to_owned(),
+                }))
+            }
+            Some(CommittedItem::RecoverHaltedBlock) => {
+                // The current block was re-bootstrapped and intake re-opened; prepare
+                // a fresh mining round for it exactly as a normal new block would.
+                self.reset_mining_block_process().await;
+                self.backup_persistent_dbs().await;
+                Some(Ok(Response {
+                    success: true,
+                    reason: "Halted block recovery".to_owned(),
                 }))
             }
             Some(CommittedItem::StartPhasePowIntake) => {
@@ -1959,6 +1984,17 @@ impl MempoolNode {
             unicorn_witness: unicorn.witness,
         };
         self.current_mined_block = Some(MinedBlock { common, extra_info });
+        // Persist the in-flight block: the pipeline is now `Halted` awaiting the
+        // storage handoff, and a restart here must not lose the mined block (it
+        // is not part of the RAFT snapshot). Without this, a restarted node
+        // re-sends an empty block to storage forever and the chain wedges.
+        self.db
+            .put_cf(
+                DB_COL_INTERNAL,
+                CURRENT_MINED_BLOCK_KEY,
+                &serialize(&self.current_mined_block).unwrap(),
+            )
+            .unwrap();
     }
 
     /// Reset the mining block processing to allow a new block.
@@ -1984,6 +2020,15 @@ impl MempoolNode {
             .unwrap();
 
         self.current_mined_block = None;
+        // Clear the persisted in-flight block now the round has advanced, so a
+        // later restart does not resurrect an already-stored block.
+        self.db
+            .put_cf(
+                DB_COL_INTERNAL,
+                CURRENT_MINED_BLOCK_KEY,
+                &serialize(&self.current_mined_block).unwrap(),
+            )
+            .unwrap();
         self.node_raft.clear_block_pipeline_proposed_keys();
         // A block committed: the round advanced, so clear the progress watchdog.
         self.reset_progress_watchdog();
@@ -2045,6 +2090,18 @@ impl MempoolNode {
                 current_random_num
             };
         }
+
+        // Restore the in-flight mined block so a restart while the pipeline is
+        // `Halted` resumes the storage handoff instead of sending an empty block.
+        self.current_mined_block = match self.db.get_cf(DB_COL_INTERNAL, CURRENT_MINED_BLOCK_KEY) {
+            Ok(Some(bytes)) => deserialize::<Option<MinedBlock>>(&bytes).unwrap_or(None),
+            Ok(None) => None,
+            Err(e) => panic!("Error accessing db: {:?}", e),
+        };
+        debug!(
+            "load_local_db: current_mined_block restored: {}",
+            self.current_mined_block.is_some()
+        );
 
         self.node_raft.set_key_run({
             let key_run = match self.db.get_cf(DB_COL_INTERNAL, RAFT_KEY_RUN) {
@@ -2181,6 +2238,28 @@ impl MempoolNode {
             });
         }
 
+        // Recovery for a `Halted` node that lost its in-flight block: it is stuck at
+        // block N with no way to rebuild it, while storage keeps re-sending its
+        // confirmation for block N - 1. Detect it here where the node-local
+        // `current_mined_block` and the consensused status / block number are all
+        // visible, then re-bootstrap block N via a dedicated RAFT-committed item so
+        // the mutation is deterministic across nodes.
+        if self.should_recover_halted_block(&previous_block_info) {
+            if !self
+                .node_raft
+                .propose_recover_halted_block(previous_block_info)
+                .await
+            {
+                self.node_raft.re_propose_uncommitted_current_b_num().await;
+                return None;
+            }
+
+            return Some(Response {
+                success: true,
+                reason: "Received block stored".to_owned(),
+            });
+        }
+
         if !self
             .node_raft
             .propose_block_with_last_info(previous_block_info)
@@ -2194,6 +2273,26 @@ impl MempoolNode {
             success: true,
             reason: "Received block stored".to_owned(),
         })
+    }
+
+    /// Whether storage's re-sent confirmation should trigger a one-shot re-bootstrap
+    /// of the current block.
+    ///
+    /// Fires only when the pipeline is `Halted`, the in-flight mined block was lost
+    /// (`current_mined_block` is `None`), and the confirmation is for the block just
+    /// before the one being mined (`info.block_num + 1 == current_block_num`). In
+    /// normal operation a `Halted` node holds its block and storage confirms the
+    /// current block number, so this never fires.
+    fn should_recover_halted_block(&self, info: &BlockStoredInfo) -> bool {
+        let is_halted = matches!(
+            self.node_raft.get_mining_pipeline_status(),
+            MiningPipelineStatus::Halted
+        );
+        let lost_mined_block = self.current_mined_block.is_none();
+        let is_previous_block =
+            self.node_raft.get_committed_current_block_num() == Some(info.block_num + 1);
+
+        is_halted && lost_mined_block && is_previous_block
     }
 
     /// Re-sends messages triggering the next step in flow

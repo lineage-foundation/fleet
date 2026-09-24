@@ -65,6 +65,9 @@ pub enum MempoolRaftItem {
     CoordinatedCmd(CoordinatedCommand),
     Timestamp(i64),
     RuntimeData(MempoolRuntimeItem),
+    // Appended so existing variant discriminants stay stable for already-persisted
+    // RAFT logs and snapshots.
+    RecoverHaltedBlock(BlockStoredInfo),
 }
 
 /// Mempool RAFT runtime item; will not get stored to disk
@@ -88,6 +91,9 @@ pub enum CommittedItem {
     Transactions,
     Snapshot,
     CoordinatedCmd(CoordinatedCommand),
+    // Appended so existing variant discriminants stay stable for already-persisted
+    // RAFT logs and snapshots.
+    RecoverHaltedBlock,
 }
 
 impl From<MiningPipelinePhaseChange> for CommittedItem {
@@ -724,6 +730,19 @@ impl MempoolRaft {
                     }
                 }
             }
+            MempoolRaftItem::RecoverHaltedBlock(info) => {
+                // Re-check the stuck condition on the consensused state so this is a
+                // no-op on any node that has already moved on (a late or duplicate
+                // commit must not disturb it). The proposer additionally requires the
+                // in-flight block to be lost locally, but that check lives at the
+                // node layer; the deterministic mutation happens only here.
+                if self.consensused.recover_halted_block(info).await {
+                    self.set_next_propose_mining_event_timeout_at();
+                    self.event_processed_generate_snapshot();
+                    return Some(CommittedItem::RecoverHaltedBlock);
+                }
+                trace!("Ignore halted block recovery no longer applicable {:?}", key);
+            }
             MempoolRaftItem::PipelineItem(mining_pipeline_item, b_num) => {
                 if !self.consensused.is_current_block(b_num) {
                     trace!("Ignore outdated item {:?}", key);
@@ -837,6 +856,34 @@ impl MempoolRaft {
     pub async fn propose_block_with_last_info(&mut self, block: BlockStoredInfo) -> bool {
         let b_num = block.block_num;
         let item = MempoolRaftItem::Block(block);
+
+        match self.local_initial_proposal {
+            None | Some(InitialProposal::PendingAuthorized) => {
+                self.local_initial_proposal = None;
+                self.propose_item_dedup(&item, b_num).await.is_some()
+            }
+            Some(InitialProposal::PendingAll) | Some(InitialProposal::PendingItem { .. }) => {
+                let dedup_b_num = Some(b_num);
+                let proposal = Some(InitialProposal::PendingItem { item, dedup_b_num });
+
+                let old = std::mem::replace(&mut self.local_initial_proposal, proposal);
+                old != self.local_initial_proposal
+            }
+        }
+    }
+
+    /// Propose a one-shot recovery for a `Halted` block whose in-flight copy was
+    /// lost, using storage's re-sent confirmation for the previous block. Committed
+    /// via RAFT so every node re-bootstraps the same block deterministically.
+    ///
+    /// De-duplicated against the block being re-mined (`current_block_num`) so
+    /// storage's repeated re-sends collapse to a single in-flight proposal.
+    pub async fn propose_recover_halted_block(&mut self, block: BlockStoredInfo) -> bool {
+        let b_num = match self.consensused.block_pipeline.current_block_num() {
+            Some(b_num) => b_num,
+            None => return false,
+        };
+        let item = MempoolRaftItem::RecoverHaltedBlock(block);
 
         match self.local_initial_proposal {
             None | Some(InitialProposal::PendingAuthorized) => {
@@ -2048,6 +2095,53 @@ impl MempoolConsensused {
 
         self.block_pipeline
             .apply_ready_block_stored_info(block_num, reward);
+    }
+
+    /// Re-bootstrap the current block after its in-flight copy was lost while the
+    /// pipeline is `Halted`.
+    ///
+    /// When a node advances to block `N` it consumes `tx_current_block_previous_hash`
+    /// while generating the block; if the finalised block is then lost (e.g. it was
+    /// never persisted across a restart), the node is stuck `Halted` at `N` with no
+    /// way to rebuild it, and storage keeps re-sending its confirmation for `N - 1`.
+    /// This re-seeds the previous hash from that confirmation and regenerates the
+    /// block template so mining can resume for the same block number.
+    ///
+    /// It deliberately does NOT call [`apply_ready_block_stored_info`]: block
+    /// `info.block_num` (== `N - 1`) was already applied when the node first advanced
+    /// to `N`, so re-extending its UTXO set / re-adding its coinbase issuance and
+    /// re-advancing `current_block_num` would double-count. Only the previous hash is
+    /// restored before regenerating; `current_block_num` stays at `N`.
+    ///
+    /// Returns `false` (no-op) unless the consensused state still matches the stuck
+    /// condition, so a late or duplicate commit cannot disturb a node that has moved
+    /// on.
+    pub async fn recover_halted_block(&mut self, info: BlockStoredInfo) -> bool {
+        let is_halted = matches!(
+            self.block_pipeline.get_mining_pipeline_status(),
+            MiningPipelineStatus::Halted
+        );
+        let is_previous_block = self.block_pipeline.current_block_num() == Some(info.block_num + 1);
+        if !is_halted || !is_previous_block {
+            return false;
+        }
+
+        self.tx_current_block_previous_hash = Some(info.block_hash);
+
+        // `generate_block` re-runs `update_issuance_unlocks`, which increments
+        // `current_issuance` for any initial issuance that unlocks at this exact block
+        // number. That increment already happened when block `N` was first generated,
+        // and re-mining the same block must leave the running issuance total
+        // unchanged, so preserve it across the regenerate (the UTXO extension is keyed
+        // by out point and so is idempotent). `current_issuance` is only otherwise
+        // moved by `apply_ready_block_stored_info`, which the recovery deliberately
+        // does not call.
+        let current_issuance = self.current_issuance;
+        self.generate_block().await;
+        self.current_issuance = current_issuance;
+
+        self.start_items_intake();
+        true
     }
 
     /// Take the block info with most vote and reset accumulator.
