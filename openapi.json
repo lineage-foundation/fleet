@@ -427,6 +427,49 @@
         ]
       }
     },
+    "/v1/items/{genesis_hash}": {
+      "get": {
+        "tags": [
+          "items"
+        ],
+        "summary": "Get genesis facts for a single item, by its create transaction's hash.",
+        "description": "A direct read of the storage node's blockchain DB, where this endpoint is mounted.\n(A mempool/user proxy to storage is a planned follow-up.)",
+        "operationId": "get_item_info",
+        "parameters": [
+          {
+            "name": "genesis_hash",
+            "in": "path",
+            "description": "The item's genesis hash (its create transaction's hash)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The item's genesis facts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemInfoResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No item genesis stored at this hash",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/mining/current-block": {
       "get": {
         "tags": [
@@ -1788,6 +1831,65 @@
               "type": "string"
             },
             "description": "The payment addresses that were imported."
+          }
+        }
+      },
+      "ItemCreated": {
+        "type": "object",
+        "description": "Where a create transaction landed.",
+        "required": [
+          "block_num",
+          "tx_hash"
+        ],
+        "properties": {
+          "block_num": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The block number the create transaction was included in.",
+            "minimum": 0
+          },
+          "tx_hash": {
+            "type": "string",
+            "description": "The create transaction's hash (same as `ItemInfoResponse::genesis_hash`)."
+          }
+        }
+      },
+      "ItemInfoResponse": {
+        "type": "object",
+        "description": "Genesis facts for a single item, as recorded on its create transaction.",
+        "required": [
+          "genesis_hash",
+          "total_amount",
+          "created"
+        ],
+        "properties": {
+          "created": {
+            "$ref": "#/components/schemas/ItemCreated",
+            "description": "Where and when the item was created."
+          },
+          "creator_address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The address the create output paid to, if any."
+          },
+          "genesis_hash": {
+            "type": "string",
+            "description": "The item's genesis hash (the create transaction's hash)."
+          },
+          "metadata": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional metadata attached at creation, if any."
+          },
+          "total_amount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The total number of item units minted by the create transaction.",
+            "minimum": 0
           }
         }
       },
