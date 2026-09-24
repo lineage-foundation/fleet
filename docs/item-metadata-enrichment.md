@@ -38,16 +38,20 @@ client-local, and enrichment is opt-out per call.
 
 **Endpoint:** `GET /v1/items/{genesis_hash}`
 
-**Nodes:** exposed on the **mempool** and **user** nodes (and the miner's
-embedded user node), so the SDK uses the same base URL it already uses for
-`/v1/balances` and `/v1/items`.
+**Nodes (implemented):** served by the **storage** node only. Implementation
+revealed that neither the mempool nor the user node holds historical transactions
+(the user node keeps a wallet DB + latest block + UTXO sets, not full history), so
+"proxied to storage" is not a light proxy but a real subsystem (request/response
+correlation, a new inbound comms message, storage-address discovery, timeouts). It
+is therefore **deferred to its own task**. For now the SDKs call the resolver on
+the **storage** base URL (e.g. `storage.lineage.to`). Restoring the single-base-URL
+DX (resolver on mempool/user, proxied to storage) is a scheduled follow-up.
 
-**Resolve path:** `genesis_hash` is the create-transaction's hash. The metadata
-lives in history (the genesis item is usually already spent, so it is not in the
-mempool UTXO set), so the mempool/user node forwards the lookup to **storage**
-(the existing blockchain-entry lookup by key), reads the create-transaction's
-create output, and extracts the fields below. The node does not cache (stateless;
-the SDK caches).
+**Resolve path:** `genesis_hash` is the create-transaction's hash. The storage node
+reads the stored create transaction by key from its blockchain DB
+(`get_stored_value_from_db`, the existing blockchain-entry lookup; the stored tx is
+decoded with `bincode` on `item.data`), extracts the create output, and returns the
+fields below. Read-only; the node does not cache (the SDK caches).
 
 **Response body (200):**
 ```json
@@ -129,8 +133,9 @@ otherwise (that remains a separate, deferred project).
 - **No consensus change / no migration** — read-side only; `tx_is_valid` and the
   on-chain item model are untouched.
 - **Metadata is immutable** — safe to cache indefinitely by `genesis_hash`.
-- **One base URL for the SDK** — the resolver lives where the SDK already talks
-  (mempool/user), proxied to storage.
+- **Resolver base URL** — for now the resolver is on the **storage** node, so SDKs
+  call the storage URL for enrichment (the mempool/user proxy that would restore a
+  single base URL is a deferred follow-up).
 - **Hand-written style** — match each repo's existing conventions; no AI-authorship
   signals in code, comments, or commit messages.
 
