@@ -67,7 +67,7 @@ fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool, is_u
                 "/v1/blockchain-entries/query",
                 post(blockchain::query_blockchain_entries),
             )
-            .route("/v1/items/{genesis_hash}", get(item_info::get_item_info_storage));
+            .route("/v1/items/{genesis_hash}", get(item_info::get_item_info));
         mounted.push("v1/blocks/latest".to_owned());
         mounted.push("v1/blocks/{num}".to_owned());
         mounted.push("v1/blocks".to_owned());
@@ -135,10 +135,12 @@ fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool, is_u
                 "/v1/transactions:deserialize",
                 post(transactions::post_deserialize_transactions),
             )
-            .route("/v1/donation-requests", post(donations::post_donation_request));
+            .route("/v1/donation-requests", post(donations::post_donation_request))
+            .route("/v1/items/{genesis_hash}", get(item_info::get_item_info));
         mounted.push("v1/transactions:serialize".to_owned());
         mounted.push("v1/transactions:deserialize".to_owned());
         mounted.push("v1/donation-requests".to_owned());
+        mounted.push("v1/items/{genesis_hash}".to_owned());
     }
 
     if state.mempool_calls_tx.is_some() || state.user_calls_tx.is_some() {

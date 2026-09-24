@@ -25,7 +25,7 @@ use crate::v1::difficulty::DifficultyTarget;
 #[allow(unused_imports)]
 use crate::v1::donations::{__path_post_donation_request, post_donation_request, DonationRequest};
 #[allow(unused_imports)]
-use crate::v1::item_info::{__path_get_item_info_storage, get_item_info_storage, ItemCreated, ItemInfoResponse};
+use crate::v1::item_info::{__path_get_item_info, get_item_info, ItemCreated, ItemInfoResponse};
 #[allow(unused_imports)]
 use crate::v1::items::{
     __path_post_create_item, post_create_item, CreateItemAcceptedResponse, CreateItemRequest, CreateItemResponse,
@@ -93,7 +93,7 @@ use crate::v1::wallet::{
         post_running_total_refresh,
         get_current_block,
         post_create_item,
-        get_item_info_storage,
+        get_item_info,
         post_payment,
         post_donation_request,
     ),
