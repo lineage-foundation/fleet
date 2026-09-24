@@ -7,6 +7,7 @@ pub mod blocks;
 pub mod debug;
 pub mod difficulty;
 pub mod donations;
+pub mod item_info;
 pub mod items;
 pub mod mining;
 pub mod payments;
@@ -65,12 +66,14 @@ fn build_router(mut state: ApiState, with_blocks: bool, with_mempool: bool, is_u
             .route(
                 "/v1/blockchain-entries/query",
                 post(blockchain::query_blockchain_entries),
-            );
+            )
+            .route("/v1/items/{genesis_hash}", get(item_info::get_item_info));
         mounted.push("v1/blocks/latest".to_owned());
         mounted.push("v1/blocks/{num}".to_owned());
         mounted.push("v1/blocks".to_owned());
         mounted.push("v1/blockchain-entries/{key}".to_owned());
         mounted.push("v1/blockchain-entries/query".to_owned());
+        mounted.push("v1/items/{genesis_hash}".to_owned());
     }
 
     if with_mempool {
@@ -649,6 +652,7 @@ mod tests {
             ("GET", "/v1/blocks"),
             ("GET", "/v1/blockchain-entries/some-key"),
             ("POST", "/v1/blockchain-entries/query"),
+            ("GET", "/v1/items/some-genesis-hash"),
         ] {
             let response = app
                 .clone()
