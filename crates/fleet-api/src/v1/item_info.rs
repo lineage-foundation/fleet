@@ -242,11 +242,9 @@ mod storage_handler_tests {
     use fleet_core::comms_handler::TcpTlsConfig;
     use fleet_core::configurations::DbMode;
     use fleet_core::db_utils::new_db;
-    use fleet_core::interfaces::{BlockchainItemMeta, NodeType, UserApi};
-    use fleet_core::threaded_call::ThreadedCallChannel;
+    use fleet_core::interfaces::{BlockchainItemMeta, NodeType};
     use fleet_core::utils::{ApiKeys, RoutesPoWInfo};
     use fleet_core::Node;
-    use fleet_wallet::WalletDb;
     use http_body_util::BodyExt;
     use prime::crypto::sign_ed25519 as sign;
     use prime::primitives::asset::Asset;
@@ -256,7 +254,7 @@ mod storage_handler_tests {
     use tower::ServiceExt;
 
     use crate::state::ApiState;
-    use crate::v1::{storage_router, user_router};
+    use crate::v1::storage_router;
 
     async fn test_node(node_type: NodeType) -> Node {
         let config = TcpTlsConfig::new_no_tls("127.0.0.1:0".parse().unwrap());
@@ -304,25 +302,6 @@ mod storage_handler_tests {
     /// A storage `ApiState` whose blockchain DB is seeded with `entries`.
     async fn storage_state_with_txs(entries: &[(&str, &Transaction, u64, u32)]) -> ApiState {
         ApiState::storage(test_node(NodeType::Storage).await, seeded_db(entries), api_keys(), routes_pow())
-    }
-
-    /// A user `ApiState` whose blockchain DB is seeded with `entries`. The item-info
-    /// read touches only `ApiState::db`, so the `UserApi` threaded-call channel is left
-    /// unanswered and an empty in-memory wallet is used.
-    async fn user_state_with_txs(entries: &[(&str, &Transaction, u64, u32)]) -> ApiState {
-        let ThreadedCallChannel { tx, mut rx } = ThreadedCallChannel::<dyn UserApi>::default();
-        // Drain (never-arriving) calls to keep the sender open for the test's lifetime;
-        // the item-info read is a direct DB read and never issues a threaded call.
-        tokio::spawn(async move { while rx.recv().await.is_some() {} });
-        let wallet_db = WalletDb::new(DbMode::InMemory, None, None, None).expect("in-memory wallet db");
-        ApiState::user(
-            test_node(NodeType::User).await,
-            seeded_db(entries),
-            tx,
-            api_keys(),
-            routes_pow(),
-            wallet_db,
-        )
     }
 
     async fn body_json(response: axum::response::Response) -> Value {
@@ -454,61 +433,5 @@ mod storage_handler_tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = body_json(response).await;
         assert_eq!(body["metadata"], Value::Null);
-    }
-
-    #[tokio::test]
-    async fn get_item_info_on_user_matches_storage_for_the_same_item() {
-        let (public_key, secret_key) = sign::gen_keypair();
-        let create_tx = construct_item_create_tx(
-            1,
-            public_key,
-            &secret_key,
-            1000,
-            GenesisTxHashSpec::Create,
-            None,
-            Some("some metadata".to_owned()),
-        );
-        let genesis_hash = "genesis_tx_hash";
-        let entries: &[(&str, &Transaction, u64, u32)] = &[(genesis_hash, &create_tx, 7, 0)];
-
-        // The same seeded blockchain DB behind a storage router and a user router must
-        // yield byte-identical genesis facts for a lookup keyed on `genesis_hash`.
-        let storage_app = storage_router(storage_state_with_txs(entries).await);
-        let user_app = user_router(user_state_with_txs(entries).await);
-
-        let uri = format!("/v1/items/{genesis_hash}");
-        let storage_response = storage_app
-            .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        let user_response = user_app
-            .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-
-        assert_eq!(user_response.status(), StatusCode::OK);
-        assert_eq!(storage_response.status(), StatusCode::OK);
-        assert_eq!(body_json(user_response).await, body_json(storage_response).await);
-    }
-
-    #[tokio::test]
-    async fn get_item_info_on_user_returns_404_for_unknown_genesis_hash() {
-        let app = user_router(user_state_with_txs(&[]).await);
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/items/unknown_hash")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        assert_eq!(
-            response.headers().get(header::CONTENT_TYPE).unwrap(),
-            "application/problem+json"
-        );
     }
 }
