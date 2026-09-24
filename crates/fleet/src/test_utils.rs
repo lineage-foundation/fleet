@@ -475,7 +475,9 @@ impl Network {
     ///Mining Reward
     pub fn mining_reward(&self) -> TokenAmount {
         let c_len = self.config.nodes[&NodeType::Mempool].len();
-        TokenAmount(7510185) / c_len as u64
+        // Per-block coinbase reward is calculate_reward(0) = 3261467223 base units,
+        // split across the mempool nodes producing the block.
+        TokenAmount(3261467223) / c_len as u64
     }
 
     ///Returns all active nodes

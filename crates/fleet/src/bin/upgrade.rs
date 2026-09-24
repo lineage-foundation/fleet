@@ -249,8 +249,7 @@ mod test {
             vec![
                 ("mempool".to_owned(), DbMode::Test(0)),
                 ("storage".to_owned(), DbMode::Test(0)),
-                ("user".to_owned(), DbMode::Test(1000)),
-                ("user".to_owned(), DbMode::Test(1001)),
+                ("user".to_owned(), DbMode::Test(0)),
                 ("miner".to_owned(), DbMode::Test(0)),
             ],
             UpgradeCfg {
@@ -276,7 +275,7 @@ mod test {
         ];
         let expected = (
             Processing::Upgrade,
-            vec![("user".to_owned(), DbMode::Test(1001))],
+            vec![("user".to_owned(), DbMode::Test(1))],
             UpgradeCfg {
                 raft_len: 1,
                 mempool_partition_full_size: 1,
@@ -322,12 +321,11 @@ mod test {
         let expected = (
             Processing::Read,
             vec![
-                ("mempool".to_owned(), DbMode::Test(0)),
                 ("mempool".to_owned(), DbMode::Test(1)),
-                ("storage".to_owned(), DbMode::Test(0)),
+                ("mempool".to_owned(), DbMode::Test(2)),
                 ("storage".to_owned(), DbMode::Test(1)),
-                ("user".to_owned(), DbMode::Test(1000)),
-                ("miner".to_owned(), DbMode::Test(0)),
+                ("storage".to_owned(), DbMode::Test(2)),
+                ("user".to_owned(), DbMode::Test(1001)),
             ],
             UpgradeCfg {
                 raft_len: 2,

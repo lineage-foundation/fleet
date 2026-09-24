@@ -343,7 +343,10 @@ async fn full_flow_single_miner_single_raft_with_static_miner_address_check() {
     let tokens_after_mining = user_get_tokens_held(&mut network, user).await;
 
     assert_eq!(initial_tokens, TokenAmount(0));
-    assert_eq!(tokens_after_mining, TokenAmount(7510185)); // 7510185 is the amount of tokens won after mining 2 blocks
+    // The winning coinbase received here is from the block mined after genesis
+    // already issued one reward, so its value is calculate_reward(calculate_reward(0)).
+    let first_reward = calculate_reward(TokenAmount(0));
+    assert_eq!(tokens_after_mining, calculate_reward(first_reward));
 }
 
 #[tokio::test(flavor = "current_thread")]

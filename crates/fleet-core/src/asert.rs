@@ -606,7 +606,13 @@ fn calculate_next_target(
         * 65536)
         / (halflife.as_secs() as i64);
 
-    assert_eq!(-1_i64 >> 1, -1_i64, "ASERT2 needs arithmetic shift support");
+    // Guard the platform assumption ASERT2 relies on below: `>>` on a signed
+    // integer must be an arithmetic (sign-extending) shift. The operands are
+    // intentionally the same value, so silence eq_op for this invariant check.
+    #[allow(clippy::eq_op)]
+    {
+        assert_eq!(-1_i64 >> 1, -1_i64, "ASERT2 needs arithmetic shift support");
+    }
 
     let mut shifts = (exponent >> 16) as i64;
     let frac = exponent as u16;
