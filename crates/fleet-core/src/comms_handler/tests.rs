@@ -74,6 +74,44 @@ async fn connect_reresolves_registered_hostname() {
     complete_mempool_nodes(nodes).await;
 }
 
+/// A survivor's RAFT send to a peer whose stable snapshot address is stale still arrives.
+/// This models a higher-index RAFT sibling that restarted on a new address: the peer connects
+/// inbound (keyed under its current address) and the survivor never dials it, so an exact-key
+/// send to the stale snapshot misses. `send_with_resolve` re-resolves the registered hostname
+/// and delivers over the existing inbound connection, reporting the resolved address so the
+/// caller can pin it.
+#[tokio::test(flavor = "current_thread")]
+async fn send_with_resolve_reaches_inbound_peer_on_changed_address() {
+    let _ = tracing_log_try_init();
+
+    let mut nodes = create_mempool_nodes(2, 2).await;
+    let (n1, tail) = nodes.split_first_mut().unwrap();
+    let (n2, _) = tail.split_first_mut().unwrap();
+
+    // n1 (the "restarted" peer) connects inbound to n2 (the survivor); n2 keys n1 under n1's
+    // actual address. n2 never dials n1, so it cannot re-resolve n1 via the outbound path.
+    n1.connect_to(n2.local_address()).await.unwrap();
+
+    // n2's stale RAFT snapshot for n1: a stable key that is NOT n1's real address. The
+    // registered hostname resolves to n1's actual listener (DNS following the peer's move).
+    let stale_addr: SocketAddr = "127.0.0.1:2".parse().unwrap();
+    let n1_host = format!("127.0.0.1:{}", n1.local_address().port());
+    n2.register_peer_hostname(stale_addr, n1_host).await;
+
+    // A plain exact-key send to the stale snapshot would miss; send_with_resolve re-resolves.
+    let resolved = n2.send_with_resolve(stale_addr, "RAFT").await.unwrap();
+    assert_eq!(resolved, Some(n1.local_address()));
+
+    if let Some(Event::NewFrame { peer: _, frame }) = n1.next_event().await {
+        let recv_frame: &str = deserialize(&frame).unwrap();
+        assert_eq!(recv_frame, "RAFT");
+    } else {
+        panic!("expected a frame delivered via re-resolution to the inbound peer");
+    }
+
+    complete_mempool_nodes(nodes).await;
+}
+
 /// Check that 2 prelaunch nodes can exchange arbitrary messages in both direction,
 /// using their public address after one node connected to the other.
 #[tokio::test(flavor = "current_thread")]

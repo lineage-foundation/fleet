@@ -443,11 +443,18 @@ impl StorageNode {
                 }
                 Some((addr, msg)) = self.node_raft.next_msg(), if ready => {
                     trace!("handle_next_event msg {:?}: {:?}", addr, msg);
-                    match self.node.send(
+                    let to = msg.0.to;
+                    match self.node.send_with_resolve(
                         addr,
                         StorageRequest::SendRaftCmd(msg)).await {
                             Err(e) => info!("Msg not sent to {}, from {}: {:?}", addr, self.local_address(), e),
-                            Ok(()) => trace!("Msg sent to {}, from {}", addr, self.local_address()),
+                            Ok(None) => trace!("Msg sent to {}, from {}", addr, self.local_address()),
+                            Ok(Some(resolved)) => {
+                                // Peer reconnected on a changed address; pin the refreshed
+                                // target so later sends hit it without re-resolving.
+                                self.node_raft.set_peer_addr(to, resolved);
+                                trace!("Msg sent to {} via re-resolved {}, from {}", addr, resolved, self.local_address());
+                            }
                         };
 
                 }

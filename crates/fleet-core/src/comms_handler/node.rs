@@ -766,6 +766,47 @@ impl Node {
             .await
     }
 
+    /// Sends to a peer at its stable RAFT address, re-resolving on an exact-key miss.
+    ///
+    /// The RAFT send target is a startup snapshot of a peer's address. When a peer (in
+    /// particular a higher-index RAFT sibling that this node never dials outbound) restarts
+    /// on a new address, it reconnects inbound and is keyed under its current address, so a
+    /// send to the stale snapshot misses with `PeerNotFound`. On that miss we re-resolve the
+    /// peer's registered hostname and retry once at the resolved (canonicalized) address,
+    /// which matches the key the inbound connection was stored under. Returns
+    /// `Ok(Some(resolved))` when the retry delivered the message (so the caller can pin the
+    /// refreshed address), or `Ok(None)` on a direct hit. Peers with no registered hostname
+    /// resolve to their stable address unchanged, so the fallback is a strict no-op for them.
+    pub async fn send_with_resolve(
+        &mut self,
+        stable_addr: SocketAddr,
+        data: impl Serialize,
+    ) -> Result<Option<SocketAddr>> {
+        let payload = Bytes::from(serialize(&data)?);
+        let id = rand::thread_rng().gen();
+        match self
+            .send_message(stable_addr, CommMessage::Direct { payload: payload.clone(), id })
+            .await
+        {
+            Ok(()) => Ok(None),
+            Err(CommsError::PeerNotFound(_)) => {
+                let resolved =
+                    canonical_socket_addr(self.resolve_dial_address(stable_addr).await);
+                if resolved != stable_addr {
+                    self.send_message(resolved, CommMessage::Direct { payload, id })
+                        .await?;
+                    Ok(Some(resolved))
+                } else {
+                    Err(CommsError::PeerNotFound(PeerInfo {
+                        node_type: None,
+                        address: Some(stable_addr),
+                    }))
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Sends a serialized message to given peers.
     pub async fn send_to_all(
         &mut self,

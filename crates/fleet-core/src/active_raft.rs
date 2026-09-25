@@ -109,6 +109,13 @@ impl ActiveRaft {
         self.peer_addr.len()
     }
 
+    /// Refresh the cached send address for a peer after it reconnected on a changed address.
+    /// The map is a startup DNS snapshot; this lets the send path pin a re-resolved address so
+    /// subsequent sends to that peer hit it directly.
+    pub fn set_peer_addr(&mut self, id: u64, addr: SocketAddr) {
+        self.peer_addr.insert(id, addr);
+    }
+
     /// All the peers to connect to when using raft.
     /// Returns an iterator that iterates over the addresses of the peers
     pub fn raft_peer_to_connect(&self) -> impl Iterator<Item = &SocketAddr> {
