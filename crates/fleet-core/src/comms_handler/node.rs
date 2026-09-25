@@ -86,7 +86,7 @@ use super::tcp_tls::{
 use super::{CommsError, Event, Result, TcpTlsConfig};
 use crate::bounded_hash_set::BoundedHashSet;
 use crate::comms_handler::error::PeerInfo;
-use crate::constants::NETWORK_VERSION;
+use crate::constants::COMMS_VERSION;
 use crate::interfaces::{node_type_as_str, CommMessage, NodeType, Token};
 use crate::utils::{canonical_socket_addr, create_socket_addr, MpscTracingSender};
 use bincode::{deserialize, serialize};
@@ -135,6 +135,12 @@ type PeerList = HashMap<SocketAddr, Peer>;
 
 /// Closing listener info
 type CloseListener = Option<(oneshot::Sender<()>, JoinHandle<()>)>;
+
+/// Monotonic id assigned to every peer connection. Removals from the peer map are guarded by it
+/// so a connection only ever evicts the entry it still owns: when the dedup logic drops a
+/// superseded connection and re-keys the surviving one under the same stable address, the
+/// superseded connection's teardown must not evict the survivor that took over its key.
+static NEXT_CONN_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Resolves a peer's registered hostname to a socket address on the RAFT send path.
 ///
@@ -233,9 +239,16 @@ pub struct Node {
     /// Resolver used to re-resolve a peer's hostname on the RAFT send path. Defaults to the
     /// system DNS lookup; tests inject a resolver to simulate DNS propagation lag.
     resolver: HostResolver,
+    /// This node's own configured node-spec address (`host:port`), sent in the handshake as a
+    /// stable identity. Set for RAFT siblings (mempool/storage) via [`Node::set_announced_host`];
+    /// left empty for nodes without a self-spec (miners/users), which keep the source-derived
+    /// keying and are never deduplicated as siblings.
+    announced_host: Arc<RwLock<String>>,
 }
 
 pub(crate) struct Peer {
+    /// Unique id for this connection, used to guard peer-map removals against key reuse.
+    conn_id: u64,
     /// Node network version.
     network_version: Option<u32>,
     /// Channel for sending frames to the peer.
@@ -295,7 +308,7 @@ impl Node {
             peer_limit,
             sub_peer_limit,
             node_type,
-            NETWORK_VERSION,
+            COMMS_VERSION,
             disable_listening,
             send_heartbeat_messages,
         )
@@ -349,6 +362,7 @@ impl Node {
             peer_hostnames: Arc::new(RwLock::new(HashMap::new())),
             trust_advertised_peer_address: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             resolver: HostResolver::system(),
+            announced_host: Arc::new(RwLock::new(String::new())),
         };
 
         if !disable_listening {
@@ -530,6 +544,31 @@ impl Node {
         if !host.is_empty() {
             self.peer_hostnames.write().await.insert(stable_addr, host);
         }
+    }
+
+    /// Record this node's own configured node-spec address, sent in the handshake as a stable
+    /// identity so RAFT siblings can key our connection under our stable address and deduplicate
+    /// the bidirectional pair. An empty host leaves this node in the source-keyed (miner/user)
+    /// behaviour.
+    pub async fn set_announced_host(&self, host: impl Into<String>) {
+        *self.announced_host.write().await = host.into();
+    }
+
+    /// Inverse of [`Node::register_peer_hostname`]: find the stable address a hostname was
+    /// registered under. A peer announces its own configured spec address in the handshake; we
+    /// registered that same string against the peer's stable address when building the RAFT peer
+    /// set, so this maps the announced host back to the stable key the rest of the node uses.
+    /// Returns `None` for an empty or unregistered host (miners/users, or a non-sibling peer).
+    async fn stable_addr_for_host(&self, host: &str) -> Option<SocketAddr> {
+        if host.is_empty() {
+            return None;
+        }
+        self.peer_hostnames
+            .read()
+            .await
+            .iter()
+            .find(|(_, registered)| registered.as_str() == host)
+            .map(|(addr, _)| *addr)
     }
 
     /// Resolve the address to dial for a peer identified by its stable address. If a hostname
@@ -919,12 +958,14 @@ impl Node {
 
     /// Prepares and sends a handshake message to a given peer.
     async fn send_handshake(&mut self, peer: SocketAddr) -> Result<()> {
+        let announced_host = self.announced_host.read().await.clone();
         self.send_message(
             peer,
             CommMessage::HandshakeRequest {
                 network_version: self.network_version,
                 node_type: self.node_type,
                 public_address: self.local_listener_address,
+                announced_host,
             },
         )
         .await
@@ -979,6 +1020,7 @@ impl Node {
                     network_version: v,
                     node_type: t,
                     public_address,
+                    announced_host,
                 } => {
                     match self
                         .handle_handshake_request(
@@ -988,6 +1030,7 @@ impl Node {
                             send_tx.clone(),
                             v,
                             t,
+                            announced_host,
                         )
                         .await
                     {
@@ -1027,6 +1070,11 @@ impl Node {
             };
         }
 
+        // The stream ended before any handshake message arrived. Report the source key: the
+        // receiver task's removal paths are guarded by `conn_id`, so this only ever tears down our
+        // own connection and never a connection that adopted this key via dedup. (Forcing an early
+        // `Err` here instead is unnecessary for that guarantee and destabilises the fully-meshed
+        // bidirectional-connect path, so we keep the original success return.)
         Ok(peer_addr)
     }
 
@@ -1141,6 +1189,8 @@ impl Node {
     /// * `send_tx`         - channel to send messages to the peer.
     /// * `network_version` - network version of the peer.
     /// * `peer_type`       - type of the peer.
+    /// * `announced_host`  - the peer's own configured spec address (stable identity), empty for
+    ///                       nodes without a self-spec (miners/users).
     async fn handle_handshake_request(
         &self,
         peer_out_addr: SocketAddr,
@@ -1149,19 +1199,26 @@ impl Node {
         mut send_tx: ResultBytesSender,
         network_version: u32,
         peer_type: NodeType,
+        announced_host: String,
     ) -> Result<SocketAddr> {
         info!(
-            "peer_out_addr: {:?}, peer_in_addr: {:?}",
-            peer_out_addr, peer_in_addr
+            "peer_out_addr: {:?}, peer_in_addr: {:?}, announced_host: {:?}",
+            peer_out_addr, peer_in_addr, announced_host
         );
-        // Identify the peer by (source IP + advertised port) by default, or by its
-        // advertised listen address when `trust_advertised_peer_address` is set (needed
-        // where a NAT rewrites the source IP, e.g. Railway private networking).
-        peer_in_addr = inbound_peer_key(
-            self.trust_advertised_peer_address(),
-            peer_out_addr,
-            peer_in_addr,
-        );
+        // A RAFT sibling announces its own stable spec address, which we registered against its
+        // stable key when building the peer set. Key the inbound connection under that stable
+        // address so it collides with our own outbound connection to the same sibling (letting the
+        // dedup below fire) and so RAFT sends addressed to the stable address reach it. Peers with
+        // no (or an unknown) announced host - miners/users - fall back to the source-derived key.
+        let sibling_stable_addr = self.stable_addr_for_host(&announced_host).await;
+        peer_in_addr = match sibling_stable_addr {
+            Some(stable_addr) => stable_addr,
+            None => inbound_peer_key(
+                self.trust_advertised_peer_address(),
+                peer_out_addr,
+                peer_in_addr,
+            ),
+        };
         if !self.is_compatible(peer_type, network_version) {
             return Err(CommsError::PeerIncompatible(PeerInfo {
                 node_type: Some(peer_type),
@@ -1169,13 +1226,47 @@ impl Node {
             }));
         }
 
+        // Read our own stable identity before taking the peers lock (leaf lock; keeps the
+        // peers -> sub_peers -> attempts order intact).
+        let self_announced_host = self.announced_host.read().await.clone();
+
         // Check for duplicate peers
         let mut all_peers = self.peers.write().await;
         if all_peers.contains_key(&peer_in_addr) {
-            return Err(CommsError::PeerDuplicate(PeerInfo {
-                node_type: Some(peer_type),
-                address: Some(peer_in_addr),
-            }));
+            // We already hold a connection to this peer under the same key. For RAFT siblings we
+            // must converge on exactly ONE connection, the SAME one on both ends, without either
+            // side knowing which arrived first. Both peers compare the same two fixed spec-address
+            // strings (self vs peer announced host), so they always agree: the lower host keeps its
+            // outbound connection (stable-keyed) and the higher host adopts the lower host's inbound
+            // connection, dropping its own now-redundant outbound. This is race-free (independent of
+            // arrival order) and leaves one stable-keyed connection RAFT can reach both ways, so
+            // there is no drop/re-dial flap. Non-siblings (miners/users, or an unknown announced
+            // host) keep the historical unconditional-reject behaviour.
+            match sibling_stable_addr {
+                Some(_) if self_announced_host < announced_host => {
+                    // Lower host: reject this inbound, keep our outbound survivor.
+                    return Err(CommsError::PeerDuplicate(PeerInfo {
+                        node_type: Some(peer_type),
+                        address: Some(peer_in_addr),
+                    }));
+                }
+                Some(_) => {
+                    // Higher host: adopt this inbound as the survivor. Drop our own outbound entry
+                    // keyed under the same stable address (dropping its `Peer` closes the redundant
+                    // connection), then fall through so the receiver task re-keys this inbound to the
+                    // stable address.
+                    if let Some(old) = all_peers.remove(&peer_in_addr) {
+                        trace!(?peer_in_addr, "Dedup: adopting inbound, dropping our outbound");
+                        drop(old);
+                    }
+                }
+                None => {
+                    return Err(CommsError::PeerDuplicate(PeerInfo {
+                        node_type: Some(peer_type),
+                        address: Some(peer_in_addr),
+                    }));
+                }
+            }
         }
 
         // Check whether peer is already connected to us
@@ -1369,6 +1460,7 @@ impl Node {
     ) -> Peer {
         let peer_addr = canonical_socket_addr(key_override.unwrap_or_else(|| socket.peer_addr()));
         let peer_cert = socket.peer_tls_certificate();
+        let conn_id = NEXT_CONN_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         let (send_tx, mut send_rx) = mpsc::channel(128);
 
@@ -1415,10 +1507,17 @@ impl Node {
                         .await
                     {
                         Ok(public_address) => {
-                            // Update key to public address so we know where to route messages
+                            // Update key to public address so we know where to route messages.
+                            // Only re-key the entry we still own (matching `conn_id`): dedup may
+                            // have replaced it under this key with a different connection.
                             {
                                 let mut peers_list = peers.write().await;
-                                if let Some(peer) = peers_list.remove(&peer_addr) {
+                                let owned = peers_list
+                                    .get(&peer_addr)
+                                    .map(|p| p.conn_id == conn_id)
+                                    .unwrap_or(false);
+                                if owned {
+                                    let peer = peers_list.remove(&peer_addr).unwrap();
                                     trace!(
                                         "Move peer to public address: {} -> {}",
                                         peer_addr,
@@ -1427,17 +1526,21 @@ impl Node {
                                     peers_list.insert(public_address, peer);
                                     public_address
                                 } else {
-                                    // Peer not present
+                                    // Peer not present (or superseded)
                                     trace!("sock_in dropped for {:?}", peer_addr);
                                     return;
                                 }
                             }
                         }
                         Err(err) => {
-                            // Drop error connection
+                            // Drop error connection, but only if we still own this key: the dedup
+                            // logic may have re-keyed the surviving connection here, which we must
+                            // not evict.
                             warn!("Remove peer: {err:?}");
                             let mut peers_list = peers.write().await;
-                            let _ = peers_list.remove(&peer_addr);
+                            if peers_list.get(&peer_addr).map(|p| p.conn_id) == Some(conn_id) {
+                                let _ = peers_list.remove(&peer_addr);
+                            }
                             trace!("sock_in dropped for {:?}", peer_addr);
                             return;
                         }
@@ -1446,10 +1549,14 @@ impl Node {
 
                 node.handle_peer_recv(public_address, messages).await;
                 // Since we don't wait for any messages from this peer, we can drop the connection.
+                // Guard the removal by `conn_id` so we only evict our own connection, never one
+                // that adopted this key via dedup.
                 warn!("Remove peer: {}", public_address);
                 {
                     let mut peers_list = peers.write().await;
-                    let _ = peers_list.remove(&public_address);
+                    if peers_list.get(&public_address).map(|p| p.conn_id) == Some(conn_id) {
+                        let _ = peers_list.remove(&public_address);
+                    }
                 }
                 // Free the sub-peer slot reserved for this peer during the handshake and
                 // clear its connection-attempt counter. `public_address` is the same key the
@@ -1469,6 +1576,7 @@ impl Node {
         });
 
         Peer {
+            conn_id,
             network_version: None,
             addr: peer_addr,
             send_tx: send_tx.into(),
@@ -1494,6 +1602,13 @@ impl Node {
     #[cfg(test)]
     pub async fn sub_peer_count(&self) -> usize {
         self.sub_peers.read().await.len()
+    }
+
+    /// The connection id currently keyed under `addr`, if any. Lets tests distinguish whether a
+    /// stable-keyed entry is still the original connection or a different one adopted via dedup.
+    #[cfg(test)]
+    pub(crate) async fn peer_conn_id(&self, addr: SocketAddr) -> Option<u64> {
+        self.peers.read().await.get(&addr).map(|p| p.conn_id)
     }
 
     /// Get a list of peers
@@ -1686,6 +1801,207 @@ mod test {
         );
 
         complete_mempool_nodes(vec![n1, n2]).await;
+    }
+
+    /// Poll until `node` has converged to exactly one connection, keyed under `stable`, with the
+    /// handshake complete (network version set, so it is not "unconnected").
+    async fn wait_for_single_stable_peer(node: &Node, stable: SocketAddr) {
+        for _ in 0..500 {
+            let peers = node.get_peers().await;
+            if peers.len() == 1
+                && peers.contains_key(&stable)
+                && node.unconnected_peers(&[stable]).await.is_empty()
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!(
+            "did not converge to a single stable-keyed peer at {stable}: {:?}",
+            node.get_peers().await
+        );
+    }
+
+    /// Divergent (Railway-style) bidirectional dedup. Two RAFT siblings dial each other while each
+    /// keys the other under a STABLE address that differs from the address it actually dials
+    /// (`set_resolver` simulates DNS pointing the registered hostname at the peer's real listener).
+    /// The pair must converge to EXACTLY ONE connection each, keyed under the sibling's stable
+    /// address (so RAFT reaches it both ways), and must not oscillate. This is the authoritative
+    /// test for the flap fix — the divergence it exercises cannot be reproduced in Docker.
+    #[tokio::test(flavor = "current_thread")]
+    async fn dedup_divergent_addresses_converge_to_single_stable_keyed_connection() {
+        let mut node_a = create_mempool_node_version(4, COMMS_VERSION).await;
+        let mut node_b = create_mempool_node_version(4, COMMS_VERSION).await;
+
+        // Stable RAFT keys each node uses for the other, deliberately NOT the peer's real listener.
+        let a_stable_for_b: SocketAddr = "127.0.0.1:2".parse().unwrap();
+        let b_stable_for_a: SocketAddr = "127.0.0.1:3".parse().unwrap();
+
+        // Each node announces its own fixed spec host; the sibling registered that same string
+        // against the stable key, so the inbound handshake maps back to the stable address.
+        node_a.set_announced_host("a").await;
+        node_b.set_announced_host("b").await;
+        node_a.register_peer_hostname(a_stable_for_b, "b").await;
+        node_b.register_peer_hostname(b_stable_for_a, "a").await;
+
+        // DNS: resolving the registered host yields the peer's real listener, so the dialed address
+        // diverges from the stable key.
+        let a_listener = node_a.local_address();
+        let b_listener = node_b.local_address();
+        node_a.set_resolver(HostResolver::new(move |_host| {
+            Box::pin(async move { Ok(b_listener) })
+        }));
+        node_b.set_resolver(HostResolver::new(move |_host| {
+            Box::pin(async move { Ok(a_listener) })
+        }));
+
+        // Open both connections (keyed under stable addresses) BEFORE either handshake is sent, so
+        // both outbound entries exist and the dedup tie-break fires on both ends.
+        node_a.connect_to_peer(a_stable_for_b).await.unwrap();
+        node_b.connect_to_peer(b_stable_for_a).await.unwrap();
+        node_a.send_handshake(a_stable_for_b).await.unwrap();
+        node_b.send_handshake(b_stable_for_a).await.unwrap();
+
+        wait_for_single_stable_peer(&node_a, a_stable_for_b).await;
+        wait_for_single_stable_peer(&node_b, b_stable_for_a).await;
+
+        // Settle window, then assert the state is unchanged (no add/remove oscillation).
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let a_peers = node_a.get_peers().await;
+        assert_eq!(
+            a_peers.len(),
+            1,
+            "node_a must hold exactly one connection: {a_peers:?}"
+        );
+        assert!(
+            a_peers.contains_key(&a_stable_for_b),
+            "node_a's sole connection must be keyed under the sibling's stable address"
+        );
+        assert!(node_a
+            .unconnected_peers(&[a_stable_for_b])
+            .await
+            .is_empty());
+
+        let b_peers = node_b.get_peers().await;
+        assert_eq!(
+            b_peers.len(),
+            1,
+            "node_b must hold exactly one connection: {b_peers:?}"
+        );
+        assert!(
+            b_peers.contains_key(&b_stable_for_a),
+            "node_b's sole connection must be keyed under the sibling's stable address"
+        );
+        assert!(node_b
+            .unconnected_peers(&[b_stable_for_a])
+            .await
+            .is_empty());
+
+        complete_mempool_nodes(vec![node_a, node_b]).await;
+    }
+
+    /// Converged case (no resolver override, dialed == stable == real listener). Two siblings dial
+    /// each other and must still converge to a single connection each with no regression: the
+    /// survivor is the lower host's outbound, and messages flow both ways over it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn dedup_converged_keeps_single_bidirectional_connection() {
+        let mut node_a = create_mempool_node_version(4, COMMS_VERSION).await;
+        let mut node_b = create_mempool_node_version(4, COMMS_VERSION).await;
+
+        let a_listener = node_a.local_address();
+        let b_listener = node_b.local_address();
+
+        // Converged: the stable key IS the real listener. Non-resolvable host strings force the
+        // dial to fall back to the stable key (== listener), so no resolver override is needed.
+        node_a.set_announced_host("node-a").await;
+        node_b.set_announced_host("node-b").await;
+        node_a.register_peer_hostname(b_listener, "node-b").await;
+        node_b.register_peer_hostname(a_listener, "node-a").await;
+
+        node_a.connect_to_peer(b_listener).await.unwrap();
+        node_b.connect_to_peer(a_listener).await.unwrap();
+        node_a.send_handshake(b_listener).await.unwrap();
+        node_b.send_handshake(a_listener).await.unwrap();
+
+        wait_for_single_stable_peer(&node_a, b_listener).await;
+        wait_for_single_stable_peer(&node_b, a_listener).await;
+
+        // The single surviving connection is bidirectional: RAFT-style sends reach both ways.
+        node_a.send(b_listener, "AtoB").await.unwrap();
+        node_b.send(a_listener, "BtoA").await.unwrap();
+
+        match node_b.next_event().await {
+            Some(Event::NewFrame { frame, .. }) => {
+                assert_eq!(deserialize::<&str>(&frame).unwrap(), "AtoB");
+            }
+            other => panic!("node_b should receive AtoB: {other:?}"),
+        }
+        match node_a.next_event().await {
+            Some(Event::NewFrame { frame, .. }) => {
+                assert_eq!(deserialize::<&str>(&frame).unwrap(), "BtoA");
+            }
+            other => panic!("node_a should receive BtoA: {other:?}"),
+        }
+
+        complete_mempool_nodes(vec![node_a, node_b]).await;
+    }
+
+    /// Tie-break mechanics of the duplicate branch, checked via connection identity. The lower host
+    /// (`we_win == true`) REJECTS the inbound and keeps its original outbound (same `conn_id`); the
+    /// higher host (`we_win == false`) ADOPTS the inbound as the survivor, dropping its original
+    /// outbound (so the stable-keyed entry now has a DIFFERENT `conn_id`).
+    #[tokio::test(flavor = "current_thread")]
+    async fn dedup_tie_break_rejects_on_lower_host_and_adopts_on_higher_host() {
+        let mut node_a = create_mempool_node_version(4, COMMS_VERSION).await;
+        let mut node_b = create_mempool_node_version(4, COMMS_VERSION).await;
+
+        let a_stable_for_b: SocketAddr = "127.0.0.1:2".parse().unwrap();
+        let b_stable_for_a: SocketAddr = "127.0.0.1:3".parse().unwrap();
+
+        node_a.set_announced_host("a").await;
+        node_b.set_announced_host("b").await;
+        node_a.register_peer_hostname(a_stable_for_b, "b").await;
+        node_b.register_peer_hostname(b_stable_for_a, "a").await;
+
+        let a_listener = node_a.local_address();
+        let b_listener = node_b.local_address();
+        node_a.set_resolver(HostResolver::new(move |_host| {
+            Box::pin(async move { Ok(b_listener) })
+        }));
+        node_b.set_resolver(HostResolver::new(move |_host| {
+            Box::pin(async move { Ok(a_listener) })
+        }));
+
+        node_a.connect_to_peer(a_stable_for_b).await.unwrap();
+        node_b.connect_to_peer(b_stable_for_a).await.unwrap();
+
+        // Capture the id of each node's own outbound connection before the handshakes race.
+        let a_outbound_id = node_a.peer_conn_id(a_stable_for_b).await.unwrap();
+        let b_outbound_id = node_b.peer_conn_id(b_stable_for_a).await.unwrap();
+
+        node_a.send_handshake(a_stable_for_b).await.unwrap();
+        node_b.send_handshake(b_stable_for_a).await.unwrap();
+
+        wait_for_single_stable_peer(&node_a, a_stable_for_b).await;
+        wait_for_single_stable_peer(&node_b, b_stable_for_a).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Lower host `a` rejected the inbound and kept its own outbound: same connection id.
+        assert_eq!(
+            node_a.peer_conn_id(a_stable_for_b).await,
+            Some(a_outbound_id),
+            "lower host must keep its original outbound connection (we_win reject)"
+        );
+        // Higher host `b` adopted the inbound and dropped its outbound: the stable-keyed entry is a
+        // different connection now, still keyed under the stable address.
+        let b_survivor_id = node_b.peer_conn_id(b_stable_for_a).await.unwrap();
+        assert_ne!(
+            b_survivor_id, b_outbound_id,
+            "higher host must adopt the inbound and drop its original outbound (we_win adopt)"
+        );
+
+        complete_mempool_nodes(vec![node_a, node_b]).await;
     }
 
     async fn create_mempool_node_version(peer_limit: usize, network_version: u32) -> Node {

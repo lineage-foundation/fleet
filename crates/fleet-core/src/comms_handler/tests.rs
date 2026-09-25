@@ -2,7 +2,7 @@
 
 use super::node::HostResolver;
 use super::{CommsError, Event, Node, TcpTlsConfig};
-use crate::constants::NETWORK_VERSION;
+use crate::constants::{COMMS_VERSION, NETWORK_VERSION};
 use crate::interfaces::NodeType;
 use super::tls_test_support::{
     get_bound_common_tls_configs, get_common_tls_config, get_test_tls_spec,
@@ -561,6 +561,11 @@ async fn connect_full(from_full: bool) {
 }
 
 /// Check incompatible nodes who cannot establish connections.
+///
+/// Peering is gated on the dedicated comms version (`COMMS_VERSION`), decoupled from the chain
+/// `NETWORK_VERSION`: a node on a different comms version is cleanly dropped, while two nodes on the
+/// same comms version complete the handshake even though it now carries the extra `announced_host`
+/// field.
 #[tokio::test(flavor = "current_thread")]
 async fn nodes_incompatible() {
     let _ = tracing_log_try_init();
@@ -569,8 +574,8 @@ async fn nodes_incompatible() {
     // Arrange
     //
     let mut nodes = create_mempool_nodes(1, 4).await;
-    nodes.push(create_mempool_node_version(4, NETWORK_VERSION + 1).await);
-    nodes.push(create_node_type_version(4, NodeType::PreLaunch, NETWORK_VERSION).await);
+    nodes.push(create_mempool_node_version(4, COMMS_VERSION + 1).await);
+    nodes.push(create_node_type_version(4, NodeType::PreLaunch, COMMS_VERSION).await);
     let (n1, tail) = nodes.split_first_mut().unwrap();
     let (n2, tail) = tail.split_first_mut().unwrap();
     let (n3, _) = tail.split_first_mut().unwrap();
@@ -614,6 +619,25 @@ async fn nodes_incompatible() {
         ),
         "{actual:?}"
     );
+
+    //
+    // Two nodes on the same comms version handshake successfully, and the handshake decodes with
+    // the new `announced_host` field populated (a sibling identity is set on the initiator).
+    //
+    let mut ok_nodes = create_mempool_nodes(2, 4).await;
+    let (m1, tail) = ok_nodes.split_first_mut().unwrap();
+    let (m2, _) = tail.split_first_mut().unwrap();
+    m1.set_announced_host("m1-sibling:1234").await;
+
+    m1.connect_to(m2.local_address()).await.unwrap();
+    m1.send(m2.local_address(), "SameVersion").await.unwrap();
+    match time::timeout(TIMEOUT_TEST_WAIT_DURATION, m2.next_event()).await {
+        Ok(Some(Event::NewFrame { frame, .. })) => {
+            assert_eq!(deserialize::<&str>(&frame).unwrap(), "SameVersion");
+        }
+        other => panic!("same-comms-version handshake should deliver the message: {other:?}"),
+    }
+    complete_mempool_nodes(ok_nodes).await;
 
     complete_mempool_nodes(nodes).await;
 }

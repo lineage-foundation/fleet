@@ -1,5 +1,17 @@
 pub use prime::constants::*;
 
+/*------- COMMS CONSTANTS --------*/
+
+/// Dedicated version for the peer-to-peer comms/handshake protocol.
+///
+/// This is deliberately separate from the chain [`NETWORK_VERSION`] (re-exported from `prime`),
+/// which versions transactions, addresses and scripts and must never change for a comms-only
+/// update. It gates peer compatibility only (`Node`'s version + `is_compatible`), so it can be
+/// bumped whenever the handshake wire format or peering rules change, forcing old and new nodes
+/// to reject each other and requiring a coordinated cutover. Kept well outside the chain-version
+/// range so it is never confused with `NETWORK_VERSION`.
+pub const COMMS_VERSION: u32 = 1000;
+
 /*------- BLOCK CONSTANTS --------*/
 
 /// Bit shifting value for reward issuance
