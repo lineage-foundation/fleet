@@ -790,11 +790,19 @@ impl Node {
         {
             Ok(()) => Ok(None),
             Err(CommsError::PeerNotFound(_)) => {
+                let host = self.peer_hostnames.read().await.get(&stable_addr).cloned();
                 let resolved =
                     canonical_socket_addr(self.resolve_dial_address(stable_addr).await);
                 if resolved != stable_addr {
                     self.send_message(resolved, CommMessage::Direct { payload, id })
                         .await?;
+                    // Register the hostname under the resolved address too. The caller pins
+                    // `resolved` as the new send target, which would otherwise have no hostname
+                    // entry, so a *later* move of the same peer could not be re-resolved. Keeping
+                    // the link means recovery survives repeated address changes.
+                    if let Some(host) = host {
+                        self.register_peer_hostname(resolved, host).await;
+                    }
                     Ok(Some(resolved))
                 } else {
                     Err(CommsError::PeerNotFound(PeerInfo {
