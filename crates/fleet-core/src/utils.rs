@@ -25,7 +25,6 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 use std::{fmt, vec};
-use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task;
 use tokio::time::Instant;
@@ -490,69 +489,50 @@ pub fn generate_random_num(len: usize) -> Vec<u8> {
 ///
 /// * `url_str`    - URL string to parse
 pub async fn create_socket_addr(url_str: &str) -> Result<SocketAddr, Box<dyn std::error::Error>> {
-    let thread_url = url_str.to_owned();
-    let handle = tokio::task::spawn_blocking(move || {
-        if let Ok(url) = Url::parse(&thread_url.clone()) {
-            let host_str = match url.host_str() {
-                Some(v) => v,
-                None => return None,
-            };
-            let port = url.port().unwrap_or(80);
+    let resolved = if let Ok(url) = Url::parse(url_str) {
+        match url.host_str() {
+            Some(host_str) => {
+                let port = url.port().unwrap_or(80);
 
-            // Check if the host is an IP address
-            if let Ok(ip) = host_str.parse::<IpAddr>() {
-                // Handle as direct IP address
-                Some(SocketAddr::new(ip, port))
-            } else {
-                // Handle as domain name. Resolution can fail transiently (e.g. a peer's
-                // hostname is momentarily unresolvable while it restarts); return None so the
-                // caller gets an Err rather than panicking the worker thread on `unwrap`.
-                let io_loop = match Runtime::new() {
-                    Ok(rt) => rt,
-                    Err(_) => return None,
-                };
-
-                let resolver = match TokioAsyncResolver::tokio_from_system_conf() {
-                    Ok(resolver) => resolver,
-                    Err(_) => return None,
-                };
-
-                let lookup_future = resolver.lookup_ip(host_str);
-                let response = match io_loop.block_on(lookup_future) {
-                    Ok(response) => response,
-                    Err(_) => return None,
-                };
-                let ip = match response.iter().next() {
-                    Some(ip) => ip,
-                    None => return None,
-                };
-                Some(SocketAddr::new(ip, port))
-            }
-        } else {
-            // Handle as direct IP address with optional port
-            let parts: Vec<&str> = thread_url.split(':').collect();
-            let ip = match parts[0].parse::<IpAddr>() {
-                Ok(ip) => ip,
-                Err(_e) => return None,
-            };
-            let port = if parts.len() > 1 {
-                match parts[1].parse::<u16>() {
-                    Ok(port) => port,
-                    Err(_e) => return None,
+                // Check if the host is an IP address
+                if let Ok(ip) = host_str.parse::<IpAddr>() {
+                    // Handle as direct IP address
+                    Some(SocketAddr::new(ip, port))
+                } else {
+                    // Handle as domain name. Resolution can fail transiently (e.g. a peer's
+                    // hostname is momentarily unresolvable while it restarts); return None so
+                    // the caller gets an Err rather than panicking on `unwrap`.
+                    match TokioAsyncResolver::tokio_from_system_conf() {
+                        Ok(resolver) => match resolver.lookup_ip(host_str).await {
+                            Ok(response) => {
+                                response.iter().next().map(|ip| SocketAddr::new(ip, port))
+                            }
+                            Err(_) => None,
+                        },
+                        Err(_) => None,
+                    }
                 }
-            } else {
-                80
-            };
-            Some(SocketAddr::new(ip, port))
+            }
+            None => None,
         }
-    });
+    } else {
+        // Handle as direct IP address with optional port
+        let parts: Vec<&str> = url_str.split(':').collect();
+        match parts[0].parse::<IpAddr>() {
+            Ok(ip) => match parts.get(1) {
+                Some(port_str) => match port_str.parse::<u16>() {
+                    Ok(port) => Some(SocketAddr::new(ip, port)),
+                    Err(_e) => None,
+                },
+                None => Some(SocketAddr::new(ip, 80)),
+            },
+            Err(_e) => None,
+        }
+    };
 
-    match handle.await {
-        Ok(v) => match v {
-            Some(v) => Ok(canonical_socket_addr(v)),
-            None => Err("Failed to parse URL".into()),
-        },
-        Err(_e) => Err("Failed to parse URL".into()),
+    match resolved {
+        Some(v) => Ok(canonical_socket_addr(v)),
+        None => Err("Failed to parse URL".into()),
     }
 }
 
