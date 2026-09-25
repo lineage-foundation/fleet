@@ -70,10 +70,18 @@ impl ActiveRaft {
 
         let peer_addr: HashMap<u64, SocketAddr> = peer_addr_vec.iter().cloned().collect();
 
-        // TODO: Connect to all other peers once connection can succeed from both sides.
+        // Dial every other RAFT peer bidirectionally. Each node holds an OUTBOUND connection to
+        // every peer, keyed under that peer's STABLE address (see `Node::connect_to_peer`, which
+        // pins the entry to the stable address via `key_override`). RAFT sends target the stable
+        // address (`next_msg` returns `peer_addr`), so they always hit this outbound connection
+        // regardless of the peer's advertised (source) address. Previously nodes only dialed
+        // LOWER ids, so the lowest id dialed nobody and had only inbound connections keyed under
+        // peers' advertised addresses; when its advertised address diverged from DNS (e.g. a
+        // Railway restart) its RAFT sends to the stable address missed and, as leader, it could
+        // not replicate -> no quorum. Dialing all peers gives every node a stable-keyed path.
         let raft_peers_to_connect = peer_addr_vec
             .iter()
-            .filter(|(idx, _)| *idx < peer_id)
+            .filter(|(idx, _)| *idx != peer_id)
             .map(|(_, addr)| *addr)
             .collect();
 
@@ -205,5 +213,71 @@ impl ActiveRaft {
                 .send(RaftCmd::Snapshot { idx, data, backup })
                 .unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_active_raft(node_idx: usize, specs: &[SocketAddr]) -> ActiveRaft {
+        ActiveRaft::new(
+            node_idx,
+            specs,
+            true,
+            Duration::from_millis(1),
+            SimpleDb::new_in_memory(&[], None).unwrap(),
+        )
+    }
+
+    fn specs() -> Vec<SocketAddr> {
+        vec![
+            "127.0.0.1:1001".parse().unwrap(),
+            "127.0.0.1:1002".parse().unwrap(),
+            "127.0.0.1:1003".parse().unwrap(),
+        ]
+    }
+
+    /// Every node dials every OTHER peer (bidirectional), so `raft_peers_to_connect` never
+    /// contains the node's own address and always contains all siblings.
+    #[test]
+    fn dials_all_other_peers_bidirectionally() {
+        let specs = specs();
+
+        for node_idx in 0..specs.len() {
+            let raft = make_active_raft(node_idx, &specs);
+            let to_connect: Vec<SocketAddr> = raft.raft_peer_to_connect().cloned().collect();
+
+            let expected: Vec<SocketAddr> = specs
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| *idx != node_idx)
+                .map(|(_, addr)| *addr)
+                .collect();
+
+            assert_eq!(
+                to_connect, expected,
+                "node_idx {node_idx} must dial all other peers"
+            );
+            assert!(
+                !to_connect.contains(&specs[node_idx]),
+                "node must not dial itself"
+            );
+        }
+    }
+
+    /// Regression for the stalled-testnet bug: the lowest-id node (idx 0, id 1) previously
+    /// dialed NOBODY (old filter kept only `idx < peer_id`), leaving it with inbound-only,
+    /// advertised-keyed connections its RAFT sends could not reach. It must now dial outbound
+    /// to every higher-id peer so it has a stable-keyed path as leader.
+    #[test]
+    fn lowest_id_node_now_dials_higher_id_peers() {
+        let specs = specs();
+        let raft = make_active_raft(0, &specs);
+        let to_connect: Vec<SocketAddr> = raft.raft_peer_to_connect().cloned().collect();
+
+        assert!(!to_connect.is_empty(), "lowest-id node must not dial nobody");
+        assert!(to_connect.contains(&specs[1]));
+        assert!(to_connect.contains(&specs[2]));
     }
 }

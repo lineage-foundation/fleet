@@ -202,6 +202,94 @@ async fn send_with_resolve_reresolves_on_every_miss_until_dns_converges() {
     complete_mempool_nodes(nodes).await;
 }
 
+/// Reproduces the stalled-testnet RAFT bug and proves the bidirectional-dial fix, at the comms
+/// level. A node keys an inbound peer under that peer's ADVERTISED address (with
+/// `trust_advertised_peer_address` on), but RAFT addresses sends to the peer's STABLE address.
+/// When the two diverge (e.g. a Railway restart moves the peer's advertised eth0 IP away from
+/// its DNS-resolved stable address), a node that only ever has an INBOUND connection to that peer
+/// cannot reach it: the send to the stable key misses even though comms is fully connected. The
+/// fix is for the node to also dial the peer OUTBOUND, establishing a connection keyed under the
+/// stable address, so the RAFT send hits it. Both connections coexist ("keep both") because they
+/// live under different keys.
+#[tokio::test(flavor = "current_thread")]
+async fn bidirectional_dial_reaches_peer_at_stable_address() {
+    let _ = tracing_log_try_init();
+
+    let mut nodes = create_mempool_nodes(2, 4).await;
+    let (survivor, tail) = nodes.split_first_mut().unwrap();
+    let (peer, _) = tail.split_first_mut().unwrap();
+
+    // The survivor trusts advertised addresses (Railway private-networking config), so it keys an
+    // inbound peer under the peer's advertised listener address.
+    survivor.set_trust_advertised_peer_address(true);
+
+    // The peer connects INBOUND to the survivor. It dials the survivor via a stable key that is
+    // deliberately NOT the survivor's real address (re-resolved through a registered hostname), so
+    // the peer keeps the survivor keyed under that stable key. This makes the later outbound dial
+    // from the survivor land under a DIFFERENT key on the peer (its advertised address), so the
+    // peer keeps both connections instead of rejecting the second as a duplicate.
+    let survivor_stable_key: SocketAddr = "127.0.0.1:7".parse().unwrap();
+    let survivor_host = format!("127.0.0.1:{}", survivor.local_address().port());
+    peer.register_peer_hostname(survivor_stable_key, survivor_host)
+        .await;
+    peer.connect_to(survivor_stable_key).await.unwrap();
+
+    // Wait until the survivor has keyed the peer under its advertised (inbound) address: comms is
+    // now fully connected in that direction.
+    let peer_advertised = peer.local_address();
+    loop {
+        if survivor.get_peers().await.contains_key(&peer_advertised) {
+            break;
+        }
+        time::sleep(Duration::from_millis(10)).await;
+    }
+
+    // The survivor's stable RAFT address for the peer, deliberately NOT the peer's advertised
+    // address. A registered hostname lets the outbound dial re-resolve it to the peer's listener.
+    let peer_stable: SocketAddr = "127.0.0.1:2".parse().unwrap();
+    let peer_host = format!("127.0.0.1:{}", peer.local_address().port());
+    survivor.register_peer_hostname(peer_stable, peer_host).await;
+
+    //
+    // RED: without an outbound (stable-keyed) connection, a RAFT-style send to the peer's stable
+    // address misses, even though the peer is connected inbound under its advertised address.
+    //
+    match survivor.send(peer_stable, "RAFT").await {
+        Err(CommsError::PeerNotFound(_)) => {}
+        other => panic!("stable-address send should miss with only an inbound connection: {other:?}"),
+    }
+
+    //
+    // GREEN: the survivor dials the peer outbound (bidirectional dialing), establishing a
+    // connection keyed under the stable address. The RAFT-style send now reaches the peer.
+    //
+    survivor.connect_to(peer_stable).await.unwrap();
+
+    // Keep-both: the survivor now holds the outbound (stable-keyed) AND the inbound
+    // (advertised-keyed) connection to the same peer.
+    let peers = survivor.get_peers().await;
+    assert!(
+        peers.contains_key(&peer_stable),
+        "outbound stable-keyed connection must exist after bidirectional dial"
+    );
+    assert!(
+        peers.contains_key(&peer_advertised),
+        "inbound advertised-keyed connection must be preserved (keep both)"
+    );
+
+    survivor.send(peer_stable, "RAFT").await.unwrap();
+
+    match time::timeout(TIMEOUT_TEST_WAIT_DURATION, peer.next_event()).await {
+        Ok(Some(Event::NewFrame { peer: _, frame })) => {
+            let recv_frame: &str = deserialize(&frame).unwrap();
+            assert_eq!(recv_frame, "RAFT");
+        }
+        other => panic!("peer should receive the RAFT frame over the stable-keyed connection: {other:?}"),
+    }
+
+    complete_mempool_nodes(nodes).await;
+}
+
 /// Check that 2 prelaunch nodes can exchange arbitrary messages in both direction,
 /// using their public address after one node connected to the other.
 #[tokio::test(flavor = "current_thread")]
