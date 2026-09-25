@@ -59,6 +59,8 @@ impl ActiveRaft {
                 peers,
                 max_size_per_msg: 4096,
                 max_inflight_msgs: 256,
+                pre_vote: true,
+                check_quorum: true,
                 tag: format!("[id={peer_id}]"),
                 ..Default::default()
             },
