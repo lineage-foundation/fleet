@@ -183,6 +183,9 @@ impl StorageNode {
         )
         .await?;
         node.set_trust_advertised_peer_address(config.trust_advertised_peer_address);
+        // Announce our own stable spec address so RAFT siblings key our connection under it and
+        // deduplicate the bidirectional pair to a single connection.
+        node.set_announced_host(raw_addr.address.clone()).await;
         // Re-resolve storage RAFT siblings' hostnames on reconnect, so a sibling that
         // restarts on a new address is re-dialable while its RAFT key stays stable.
         for (peer_addr, host) in

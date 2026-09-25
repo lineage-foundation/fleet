@@ -197,6 +197,9 @@ impl MempoolNode {
         )
         .await?;
         node.set_trust_advertised_peer_address(config.trust_advertised_peer_address);
+        // Announce our own stable spec address so RAFT siblings key our connection under it and
+        // deduplicate the bidirectional pair to a single connection.
+        node.set_announced_host(raw_addr.address.clone()).await;
         // Re-resolve the storage hostname when (re)connecting so the mempool follows the
         // storage node across address changes while sending to a stable key.
         node.register_peer_hostname(storage_addr, raw_storage_addr.address.clone())

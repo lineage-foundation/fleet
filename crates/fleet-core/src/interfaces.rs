@@ -358,6 +358,14 @@ pub enum CommMessage {
         node_type: NodeType,
         /// Publicly available socket address of the node that can be used for inbound connections.
         public_address: SocketAddr,
+        /// The sender's own configured node-spec address (`host:port`).
+        ///
+        /// This is a stable identity that survives the sender's address changes (e.g. a Railway
+        /// redeploy that moves its source IP). RAFT siblings (mempool/storage) send their spec
+        /// address here so the receiver can key the connection under the sibling's stable address
+        /// and deduplicate the bidirectional pair to a single connection. Empty for nodes without a
+        /// self-spec (miners/users), which keep the source-derived keying.
+        announced_host: String,
     },
     /// Handshake response.
     HandshakeResponse {
