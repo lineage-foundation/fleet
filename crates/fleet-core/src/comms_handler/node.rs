@@ -386,21 +386,30 @@ impl Node {
             loop {
                 interval.tick().await;
 
-                let peers: Vec<SocketAddr> = node
+                // Snapshot the conn_id alongside each address so a probe miss can be traced
+                // back to the exact connection that was probed, not just the key it lived
+                // under (which a dedup re-key may since have handed to a different peer).
+                let peers: Vec<(SocketAddr, u64)> = node
                     .peers
                     .read()
                     .await
                     .iter()
-                    .map(|(addr, _)| addr)
-                    .cloned()
+                    .map(|(addr, peer)| (*addr, peer.conn_id))
                     .collect();
                 debug!("Peers to send HB {:?}", peers);
 
-                match node.send_heartbeat_message(peers.into_iter()).await {
+                match node
+                    .send_heartbeat_message(peers.iter().map(|(addr, _)| *addr))
+                    .await
+                {
                     Ok(unsent_peers) => {
                         if !unsent_peers.is_empty() {
                             warn!("Following peers failed to receive HB probe: {unsent_peers:?}");
-                            node.flush_stale_peers(unsent_peers).await;
+                            let stale_peers: Vec<(SocketAddr, u64)> = peers
+                                .into_iter()
+                                .filter(|(addr, _)| unsent_peers.contains(addr))
+                                .collect();
+                            node.flush_stale_peers(stale_peers).await;
                         }
                     }
                     Err(e) => error!("Error sending Heartbeat {e:?}"),
@@ -940,12 +949,17 @@ impl Node {
         Ok(unsent_nodes)
     }
 
-    async fn flush_stale_peers(&self, stale_peers: Vec<SocketAddr>) {
+    async fn flush_stale_peers(&self, stale_peers: Vec<(SocketAddr, u64)>) {
         debug!("Flushing stale peers {stale_peers:?}");
-        self.peers
-            .write()
-            .await
-            .retain(|addr, _| !stale_peers.contains(addr))
+        let mut peers_list = self.peers.write().await;
+        for (addr, conn_id) in stale_peers {
+            // Only remove if the stored connection is still the one that was probed: dedup
+            // may have re-keyed a different (surviving) connection into this address after
+            // the probe missed, and that connection must not be evicted.
+            if peers_list.get(&addr).map(|p| p.conn_id) == Some(conn_id) {
+                peers_list.remove(&addr);
+            }
+        }
     }
 
     pub fn abort_heartbeat_handle(&mut self) {
