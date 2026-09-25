@@ -571,11 +571,12 @@ mod tests {
     }
 
     // Setup a peer group running all raft loops and dispatching messages.
-    // An isolated non-leader must not inflate the cluster term. With PreVote a
-    // node that cannot reach a quorum never persists a higher term, so once the
-    // partition heals the sitting leader is retained and the committed term does
-    // not jump. Without PreVote the isolated node campaigns on every election
-    // timeout, climbs its term, and forces a fresh election on rejoining.
+    // An isolated non-leader must not inflate the cluster term. With the production
+    // config (PreVote + check_quorum) a node that cannot reach a quorum never
+    // persists a higher term, so once the partition heals the sitting leader is
+    // retained and the committed term does not jump. Without PreVote the isolated
+    // node campaigns on every election timeout, climbs its term, and forces a fresh
+    // election on rejoining; check_quorum adds leader stickiness against such votes.
     #[tokio::test(flavor = "current_thread")]
     async fn test_prevote_partition_no_term_inflation_3() {
         let _ = tracing_log_try_init();

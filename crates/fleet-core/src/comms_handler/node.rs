@@ -142,7 +142,7 @@ type CloseListener = Option<(oneshot::Sender<()>, JoinHandle<()>)>;
 /// lag that returns a stale address before converging) that the system resolver cannot be made
 /// to reproduce deterministically. Production always uses [`create_socket_addr`].
 #[derive(Clone)]
-pub struct HostResolver(
+pub(crate) struct HostResolver(
     Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = io::Result<SocketAddr>> + Send>> + Send + Sync>,
 );
 
