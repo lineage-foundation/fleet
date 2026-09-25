@@ -619,8 +619,11 @@ impl MempoolNode {
         info!("");
 
         self.node_raft.propose_timestamp().await;
+        // Re-resolve the storage address on a miss: if the storage node restarted on a new
+        // address, the block handoff must follow it (same as the RAFT send path). The resolved
+        // address is not pinned; the stable hostname-backed address stays the target.
         self.node
-            .send(self.storage_addr, StorageRequest::SendBlock { mined_block })
+            .send_with_resolve(self.storage_addr, StorageRequest::SendBlock { mined_block })
             .await?;
         Ok(())
     }
