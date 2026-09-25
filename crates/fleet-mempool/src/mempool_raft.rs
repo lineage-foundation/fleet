@@ -822,6 +822,11 @@ impl MempoolRaft {
         self.raft_active.next_msg().await
     }
 
+    /// Refresh the cached send address for a peer after it reconnected on a changed address.
+    pub fn set_peer_addr(&mut self, id: u64, addr: SocketAddr) {
+        self.raft_active.set_peer_addr(id, addr);
+    }
+
     /// Process a raft message: send to spawned raft loop.
     /// ### Arguments
     /// * `msg`   - holds the recieved message in a RaftMessageWrapper.
