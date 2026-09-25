@@ -175,7 +175,11 @@ impl StorageNode {
             config.peer_limit,
             NodeType::Storage,
             false,
-            false,
+            // Send heartbeats so stale peer connections are detected and flushed
+            // (as the mempool tier does). Without this, when a storage RAFT peer
+            // restarts on a new address the survivors keep the dead entry and
+            // never re-dial it, so a single-node redeploy cannot rejoin.
+            true,
         )
         .await?;
         node.set_trust_advertised_peer_address(config.trust_advertised_peer_address);

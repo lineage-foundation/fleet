@@ -46,21 +46,12 @@ async fn run_node(matches: &ArgMatches<'_>) {
         )
     };
 
-    // Need to connect first so Raft messages can be sent.
-    loop_wait_connnect_to_peers_async(node_conn.clone(), expected_connected_addrs).await;
-    info!("Raft and Storage connection complete");
-
-    // RAFT HANDLING
-    let raft_loop_handle = {
-        let raft_loop = node.raft_loop();
-        tokio::spawn(async move {
-            info!("Peer connect complete, start Raft");
-            raft_loop.await;
-            info!("Raft complete");
-        })
-    };
-
     // REST API
+    // Bind the API before the RAFT peer-connect gate below, so the node's API
+    // is available as soon as it starts, independent of RAFT membership. A node
+    // that restarts on a new address may take time to rejoin its peers; gating
+    // the API bind on full peer connectivity previously left it returning 502
+    // until it reconnected.
     let api_handle = tokio::spawn({
         let (api_addr, api_tls, api_keys, routes_pow, peer) = api_inputs;
         let threaded_calls_tx = threaded_calls_tx;
@@ -106,6 +97,20 @@ async fn run_node(matches: &ArgMatches<'_>) {
             }
         }
     });
+
+    // Need to connect first so Raft messages can be sent.
+    loop_wait_connnect_to_peers_async(node_conn.clone(), expected_connected_addrs).await;
+    info!("Raft and Storage connection complete");
+
+    // RAFT HANDLING
+    let raft_loop_handle = {
+        let raft_loop = node.raft_loop();
+        tokio::spawn(async move {
+            info!("Peer connect complete, start Raft");
+            raft_loop.await;
+            info!("Raft complete");
+        })
+    };
 
     // REQUEST HANDLING
     let main_loop_handle = tokio::spawn({
