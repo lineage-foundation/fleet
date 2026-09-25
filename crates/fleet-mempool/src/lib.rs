@@ -970,18 +970,15 @@ impl MempoolNode {
                 }
                 Some((addr, msg)) = self.node_raft.next_msg(), if ready => {
                     trace!("handle_next_event msg {:?}: {:?}", addr, msg);
-                    let to = msg.0.to;
                     match self.node.send_with_resolve(
                         addr,
                         MempoolRequest::SendRaftCmd(msg)).await {
                             Err(e) => info!("Msg not sent to {}, from {}: {:?}", addr, self.local_address(), e),
                             Ok(None) => trace!("Msg sent to {}, from {}", addr, self.local_address()),
-                            Ok(Some(resolved)) => {
-                                // Peer reconnected on a changed address; pin the refreshed
-                                // target so later sends hit it without re-resolving.
-                                self.node_raft.set_peer_addr(to, resolved);
-                                trace!("Msg sent to {} via re-resolved {}, from {}", addr, resolved, self.local_address());
-                            }
+                            // Delivered via a re-resolved address. Do NOT pin it: the stable
+                            // snapshot address stays the RAFT send key so the next miss re-resolves
+                            // again, tracking a peer whose DNS is still converging after a redeploy.
+                            Ok(Some(resolved)) => trace!("Msg sent to {} via re-resolved {}, from {}", addr, resolved, self.local_address()),
                         };
                 }
                 _ = self.node_raft.timeout_propose_transactions(), if ready && !shutdown => {

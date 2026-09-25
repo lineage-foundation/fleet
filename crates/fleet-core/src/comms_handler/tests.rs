@@ -1,5 +1,6 @@
 //! Tests for peer-to-peer communication.
 
+use super::node::HostResolver;
 use super::{CommsError, Event, Node, TcpTlsConfig};
 use crate::constants::NETWORK_VERSION;
 use crate::interfaces::NodeType;
@@ -11,6 +12,8 @@ use bincode::deserialize;
 use futures::future::join_all;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 use tracing::debug;
@@ -107,6 +110,93 @@ async fn send_with_resolve_reaches_inbound_peer_on_changed_address() {
         assert_eq!(recv_frame, "RAFT");
     } else {
         panic!("expected a frame delivered via re-resolution to the inbound peer");
+    }
+
+    complete_mempool_nodes(nodes).await;
+}
+
+/// DNS propagation lag must not lock the RAFT send path onto a stale address. This models a
+/// higher-index sibling that redeployed onto a new address while DNS still hands back the old
+/// one for a while: the resolver returns the OLD instance's address for the first few misses,
+/// then converges to the NEW instance. Because the caller keeps sending to the stable key and
+/// never pins the re-resolved address, every miss re-queries the resolver, so once DNS converges
+/// the send reaches the NEW instance. If the resolved address were pinned (or cached), sends
+/// would latch onto the stale instance and never re-resolve, so the new instance would starve —
+/// this test fails in that case.
+#[tokio::test(flavor = "current_thread")]
+async fn send_with_resolve_reresolves_on_every_miss_until_dns_converges() {
+    let _ = tracing_log_try_init();
+
+    // survivor = n2; old + new are the two incarnations of the same restarting sibling, both
+    // connected inbound to the survivor and keyed under their own listener addresses.
+    let mut nodes = create_mempool_nodes(3, 3).await;
+    let (survivor, tail) = nodes.split_first_mut().unwrap();
+    let (old_instance, tail) = tail.split_first_mut().unwrap();
+    let (new_instance, _) = tail.split_first_mut().unwrap();
+
+    old_instance
+        .connect_to(survivor.local_address())
+        .await
+        .unwrap();
+    new_instance
+        .connect_to(survivor.local_address())
+        .await
+        .unwrap();
+
+    // The survivor's stable RAFT snapshot key for the sibling: deliberately not either real
+    // address. A registered hostname makes the miss path re-resolve via the injected resolver.
+    let stable_addr: SocketAddr = "127.0.0.1:2".parse().unwrap();
+    survivor
+        .register_peer_hostname(stable_addr, "sibling.invalid:0")
+        .await;
+
+    // Resolver returns the OLD address for the first `converge_after` calls (DNS lag), then the
+    // NEW address. Counting invocations proves the send path re-queries on every miss.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let old_addr = old_instance.local_address();
+    let new_addr = new_instance.local_address();
+    const CONVERGE_AFTER: usize = 3;
+    let calls_for_resolver = calls.clone();
+    survivor.set_resolver(HostResolver::new(move |_host| {
+        let calls = calls_for_resolver.clone();
+        Box::pin(async move {
+            let n = calls.fetch_add(1, Ordering::SeqCst);
+            Ok(if n < CONVERGE_AFTER { old_addr } else { new_addr })
+        })
+    }));
+
+    // Emulate the RAFT send loop: always send to the stable key, never pin the resolved address.
+    const TOTAL_SENDS: usize = CONVERGE_AFTER + 2;
+    for i in 0..TOTAL_SENDS {
+        let payload = if i < CONVERGE_AFTER { "STALE" } else { "CONVERGED" };
+        let resolved = survivor
+            .send_with_resolve(stable_addr, payload)
+            .await
+            .unwrap();
+        // Every send is an exact-key miss on the stable snapshot, so it re-resolves and reports
+        // the address it delivered to; it must never report the stable key itself.
+        assert_eq!(
+            resolved,
+            Some(if i < CONVERGE_AFTER { old_addr } else { new_addr })
+        );
+    }
+
+    // The resolver was queried once per send: no result was cached or pinned across sends.
+    assert_eq!(calls.load(Ordering::SeqCst), TOTAL_SENDS);
+
+    // The stable snapshot key was never turned into a live peer entry (i.e. never pinned): a
+    // plain exact-key send to it still misses.
+    match survivor.send(stable_addr, "DIRECT").await {
+        Err(CommsError::PeerNotFound(_)) => {}
+        other => panic!("stable key should not have been pinned into a live peer: {other:?}"),
+    }
+
+    // Once DNS converged, delivery reached the NEW instance (not the stale old one).
+    if let Some(Event::NewFrame { peer: _, frame }) = new_instance.next_event().await {
+        let recv_frame: &str = deserialize(&frame).unwrap();
+        assert_eq!(recv_frame, "CONVERGED");
+    } else {
+        panic!("new instance should receive the post-convergence message");
     }
 
     complete_mempool_nodes(nodes).await;
