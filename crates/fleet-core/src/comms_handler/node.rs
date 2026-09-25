@@ -96,7 +96,9 @@ use futures::SinkExt;
 use rand::prelude::*;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::future::Future;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::{fmt, io};
 use tokio::time::{interval, timeout, Duration};
@@ -133,6 +135,51 @@ type PeerList = HashMap<SocketAddr, Peer>;
 
 /// Closing listener info
 type CloseListener = Option<(oneshot::Sender<()>, JoinHandle<()>)>;
+
+/// Resolves a peer's registered hostname to a socket address on the RAFT send path.
+///
+/// Wrapping the resolver behind this handle lets tests inject DNS behaviour (e.g. propagation
+/// lag that returns a stale address before converging) that the system resolver cannot be made
+/// to reproduce deterministically. Production always uses [`create_socket_addr`].
+#[derive(Clone)]
+pub(crate) struct HostResolver(
+    Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = io::Result<SocketAddr>> + Send>> + Send + Sync>,
+);
+
+impl HostResolver {
+    /// Build a resolver from an async resolution closure.
+    pub(crate) fn new<F>(resolve: F) -> Self
+    where
+        F: Fn(String) -> Pin<Box<dyn Future<Output = io::Result<SocketAddr>> + Send>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        Self(Arc::new(resolve))
+    }
+
+    /// The default resolver: the system DNS lookup used in production.
+    fn system() -> Self {
+        Self::new(|host| {
+            Box::pin(async move {
+                create_socket_addr(&host)
+                    .await
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
+            })
+        })
+    }
+
+    /// Resolve a hostname to a socket address.
+    async fn resolve(&self, host: String) -> io::Result<SocketAddr> {
+        (self.0)(host).await
+    }
+}
+
+impl fmt::Debug for HostResolver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("HostResolver")
+    }
+}
 
 /// An abstract communication interface in the network.
 #[derive(Debug, Clone)]
@@ -183,6 +230,9 @@ pub struct Node {
     /// Identify inbound peers by their advertised listen address instead of the
     /// connection's source IP. Defaults to `false`; opt-in via `set_trust_advertised_peer_address`.
     trust_advertised_peer_address: Arc<std::sync::atomic::AtomicBool>,
+    /// Resolver used to re-resolve a peer's hostname on the RAFT send path. Defaults to the
+    /// system DNS lookup; tests inject a resolver to simulate DNS propagation lag.
+    resolver: HostResolver,
 }
 
 pub(crate) struct Peer {
@@ -298,6 +348,7 @@ impl Node {
             miner_connection_attempts: Arc::new(RwLock::new(HashMap::new())),
             peer_hostnames: Arc::new(RwLock::new(HashMap::new())),
             trust_advertised_peer_address: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            resolver: HostResolver::system(),
         };
 
         if !disable_listening {
@@ -487,7 +538,7 @@ impl Node {
     async fn resolve_dial_address(&self, peer: SocketAddr) -> SocketAddr {
         let host = self.peer_hostnames.read().await.get(&peer).cloned();
         match host {
-            Some(host) => match create_socket_addr(&host).await {
+            Some(host) => match self.resolver.resolve(host.clone()).await {
                 Ok(addr) => addr,
                 Err(e) => {
                     trace!(?peer, ?host, ?e, "Re-resolve failed; dialing stable address");
@@ -496,6 +547,12 @@ impl Node {
             },
             None => peer,
         }
+    }
+
+    /// Inject a resolver for the RAFT send path so tests can simulate DNS propagation lag.
+    #[cfg(test)]
+    pub(crate) fn set_resolver(&mut self, resolver: HostResolver) {
+        self.resolver = resolver;
     }
 
     /// Establishes a connection to a remote peer.
@@ -774,8 +831,10 @@ impl Node {
     /// send to the stale snapshot misses with `PeerNotFound`. On that miss we re-resolve the
     /// peer's registered hostname and retry once at the resolved (canonicalized) address,
     /// which matches the key the inbound connection was stored under. Returns
-    /// `Ok(Some(resolved))` when the retry delivered the message (so the caller can pin the
-    /// refreshed address), or `Ok(None)` on a direct hit. Peers with no registered hostname
+    /// `Ok(Some(resolved))` when the retry delivered the message (the caller treats this as a
+    /// plain success and must NOT pin `resolved`: the stable address stays the RAFT send key so
+    /// the next miss re-resolves again, which is what lets recovery track a peer whose DNS is
+    /// still converging), or `Ok(None)` on a direct hit. Peers with no registered hostname
     /// resolve to their stable address unchanged, so the fallback is a strict no-op for them.
     pub async fn send_with_resolve(
         &mut self,
@@ -796,10 +855,11 @@ impl Node {
                 if resolved != stable_addr {
                     self.send_message(resolved, CommMessage::Direct { payload, id })
                         .await?;
-                    // Register the hostname under the resolved address too. The caller pins
-                    // `resolved` as the new send target, which would otherwise have no hostname
-                    // entry, so a *later* move of the same peer could not be re-resolved. Keeping
-                    // the link means recovery survives repeated address changes.
+                    // Also register the hostname under the resolved address. We no longer pin
+                    // `resolved` as the RAFT send key (the stable address stays the key, so every
+                    // miss re-resolves and tracks the peer's current address), but keeping the
+                    // hostname link means that if the peer is ever reached via this address it
+                    // remains re-resolvable across further moves.
                     if let Some(host) = host {
                         self.register_peer_hostname(resolved, host).await;
                     }

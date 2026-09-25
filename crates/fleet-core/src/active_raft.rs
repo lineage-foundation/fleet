@@ -59,6 +59,8 @@ impl ActiveRaft {
                 peers,
                 max_size_per_msg: 4096,
                 max_inflight_msgs: 256,
+                pre_vote: true,
+                check_quorum: true,
                 tag: format!("[id={peer_id}]"),
                 ..Default::default()
             },
@@ -107,13 +109,6 @@ impl ActiveRaft {
     /// Returns a map to the addresses of this raft's peers
     pub fn peers_len(&self) -> usize {
         self.peer_addr.len()
-    }
-
-    /// Refresh the cached send address for a peer after it reconnected on a changed address.
-    /// The map is a startup DNS snapshot; this lets the send path pin a re-resolved address so
-    /// subsequent sends to that peer hit it directly.
-    pub fn set_peer_addr(&mut self, id: u64, addr: SocketAddr) {
-        self.peer_addr.insert(id, addr);
     }
 
     /// All the peers to connect to when using raft.

@@ -571,6 +571,49 @@ mod tests {
     }
 
     // Setup a peer group running all raft loops and dispatching messages.
+    // An isolated non-leader must not inflate the cluster term. With the production
+    // config (PreVote + check_quorum) a node that cannot reach a quorum never
+    // persists a higher term, so once the partition heals the sitting leader is
+    // retained and the committed term does not jump. Without PreVote the isolated
+    // node campaigns on every election timeout, climbs its term, and forces a fresh
+    // election on rejoining; check_quorum adds leader stickiness against such votes.
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_prevote_partition_no_term_inflation_3() {
+        let _ = tracing_log_try_init();
+        let (peer_indexes, mut test_nodes) = test_configs(3);
+        let peer_msg_lost = Arc::new(Mutex::new(HashSet::new()));
+        let (join_handles, _) = spawn_nodes_loops(&peer_indexes, &mut test_nodes, &peer_msg_lost);
+        all_recv_initial_snapshot(&mut test_nodes).await;
+
+        info!("Establish a leader and record the committed baseline term");
+        all_recv_send_proposed_data(&mut test_nodes, 0, vec![17]).await;
+        let term_before = test_nodes[0].last_committed.as_ref().unwrap().term;
+
+        // The randomized election timeout is 20-40 ticks at 1ms per tick, so
+        // this window covers a dozen or more election timeouts on the isolated
+        // node.
+        info!("Isolate node 3 and let it run through many election timeouts");
+        peer_msg_lost.lock().await.insert(3);
+        time::sleep(Duration::from_millis(500)).await;
+
+        info!("Heal partition and let the cluster settle");
+        peer_msg_lost.lock().await.clear();
+        time::sleep(Duration::from_millis(300)).await;
+
+        info!("A fresh proposal must still commit at the original term");
+        all_recv_send_proposed_data(&mut test_nodes, 0, vec![33]).await;
+        let term_after = test_nodes[0].last_committed.as_ref().unwrap().term;
+
+        assert_eq!(
+            term_after, term_before,
+            "leader term must not jump after an isolated node rejoins: \
+             term_before={term_before}, term_after={term_after}"
+        );
+
+        close_nodes_loops(test_nodes, join_handles).await;
+    }
+
+    // Setup a peer group running all raft loops and dispatching messages.
     // Node not receiving message can catch up, snapshot exist but record still there.
     #[tokio::test(flavor = "current_thread")]
     async fn test_skip_snapshot_catch_up_3() {
@@ -1119,6 +1162,8 @@ mod tests {
             Config {
                 id: peer_id,
                 peers: peers.to_owned(),
+                pre_vote: true,
+                check_quorum: true,
                 ..Default::default()
             },
             SimpleDb::new_in_memory(&[], None).unwrap(),
