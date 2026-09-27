@@ -1,0 +1,64 @@
+name: Deploy testnet (canary)
+
+# Guarded canary deploy of a signed release onto the live 9-service testnet (Railway
+# project "fleet", environment "testnet"). Rolls vX.Y.Z one node at a time — miner-2 as the
+# canary, then the rest of the miners, then storage one-by-one, then mempool one-by-one —
+# verifying chain health between every step and auto-rolling-back on regress. See
+# ops/deploy-testnet.sh for the full flow, the health check (identical consensus hash across
+# storage-0/1/2, not just matching heights), and the structural testnet-only guard.
+#
+# Caveat (same as release-please.yml): under the default GITHUB_TOKEN, a release-please
+# Release does NOT cascade-trigger other workflows (GitHub does not chain events from the
+# default token), so this workflow's `release: published` trigger will not fire automatically
+# off of a release-please release until a RELEASE_PLEASE_TOKEN PAT is wired into
+# release-please.yml. Until then, `workflow_dispatch` below is the reliable path — run it
+# manually with the version tag after a release is published.
+#
+# Required secret: RAILWAY_API_TOKEN — a Railway API token scoped to the fleet project, added
+# as a fleet repo (or "testnet" environment) Actions secret. Nothing else is required; every
+# project/environment/service ID it needs is resolved from the Railway API at runtime (see
+# ops/deploy-testnet.sh) rather than stored here.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version to deploy, e.g. v1.4.2 (GHCR image tag is this without the leading v)"
+        required: true
+        type: string
+      dry_run:
+        description: "Resolve and print the deploy plan only; make zero mutations"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  # One canary rollout at a time; never let two runs race mutations onto the same testnet.
+  group: deploy-testnet
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-testnet:
+    name: Canary deploy testnet
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: testnet
+    env:
+      VERSION: ${{ github.event.release.tag_name || inputs.version }}
+      DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '0' }}
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: "v2.4.1"
+
+      - name: Run guarded canary deploy
+        run: ops/deploy-testnet.sh "$VERSION"
