@@ -1,0 +1,13 @@
+# Semgrep scan exclusions. Tune as findings are triaged; keep entries scoped and
+# justified rather than broad.
+
+# Build output and lockfiles; not source.
+target/
+Cargo.lock
+
+# Generated, not hand-authored.
+openapi.json
+
+# Placeholder TLS fixture, already excluded from Trivy and gitleaks for the same reason.
+crates/fleet/src/bin/tls_certificates.json
+.docker/conf/tls_certificates.json

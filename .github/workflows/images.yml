@@ -11,6 +11,13 @@ name: Build, scan and push node images
 #
 # Tags: release -> version + `latest`; push to main -> `main`, `latest`, and the commit sha,
 # so deployments can pin by reference or track `latest` (main tip). The testnet tracks `latest`.
+#
+# Every pushed image (main and release) is also cosign-signed keyless (Sigstore, via GitHub
+# Actions OIDC — no key material, no new secret) and gets an SBOM generated and attached as a
+# cosign attestation, both by digest. Verify with:
+#   cosign verify --certificate-identity-regexp 'https://github.com/lineage-foundation/fleet/.*' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     ghcr.io/lineage-foundation/<node>@<digest>
 
 on:
   release:
@@ -49,6 +56,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Keyless cosign signing exchanges this OIDC token for a short-lived Sigstore
+      # certificate; no signing key is stored anywhere.
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -107,6 +117,7 @@ jobs:
 
       # Reuses the layers built above (cache hit), so this only assembles and pushes.
       - name: Push image
+        id: push
         if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v6
         with:
@@ -119,3 +130,36 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha,scope=fleet-${{ matrix.node }}
           cache-to: type=gha,mode=max,scope=fleet-${{ matrix.node }}
+
+      # Everything below signs/attests the exact digest just pushed, not a tag (tags are
+      # mutable). Skipped on PRs, same as the push itself.
+      - name: Install cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: "v2.4.1"
+
+      - name: Sign image (cosign, keyless)
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.node }}@${{ steps.push.outputs.digest }}
+        run: cosign sign --yes "$IMAGE"
+
+      - name: Generate SBOM (syft)
+        if: github.event_name != 'pull_request'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/${{ matrix.node }}@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.node }}.spdx.json
+          upload-artifact: false
+
+      - name: Attest SBOM (cosign)
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.node }}@${{ steps.push.outputs.digest }}
+        run: |
+          cosign attest --yes \
+            --predicate sbom-${{ matrix.node }}.spdx.json \
+            --type spdxjson \
+            "$IMAGE"
