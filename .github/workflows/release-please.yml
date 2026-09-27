@@ -1,0 +1,42 @@
+name: release-please
+
+# Maintains a standing "release PR" built from Conventional Commits merged to main
+# (release-type: simple, config in release-please-config.json / manifest in
+# .release-please-manifest.json). Merging that PR tags vX.Y.Z and cuts a GitHub Release —
+# no per-crate Cargo.toml versions are touched, this only produces a deployable tag/release.
+#
+# That release's `release: published` event is what images.yml already listens for to build
+# and push the `vX.Y.Z` image tags (see the `type=semver` line in its metadata step) — this
+# workflow does not build or push images itself.
+#
+# Caveat: when release-please-action runs with the default GITHUB_TOKEN, the tag/release it
+# creates does NOT retrigger other workflows (GitHub does not cascade events from the default
+# token, to prevent infinite loops) — so images.yml's `release: published` path will not fire
+# automatically off of that release until a PAT is supplied. Add a repo secret named
+# RELEASE_PLEASE_TOKEN (a fine-grained PAT with contents: write, or a GitHub App installation
+# token) to enable the automatic cascade; until then, run images.yml manually
+# (workflow_dispatch is not currently wired for it) or re-run it after a release is published.
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-please-${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: release-please
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
