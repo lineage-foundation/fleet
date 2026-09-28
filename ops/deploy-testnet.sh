@@ -226,12 +226,53 @@ service_set_image() {
   }' "$(jq -n --arg env "$TESTNET_ENV_ID" --arg svc "$svc_id" --arg image "$image" '{env: $env, svc: $svc, image: $image}')"
 }
 
-service_redeploy() {
+# Deploy the service's CURRENT config (i.e. the image just set by service_set_image).
+# NB: use serviceInstanceDeployV2, NOT serviceInstanceRedeploy — the latter re-runs
+# the service's PREVIOUS deployment (its old image tag), so after changing source.image
+# it would redeploy the OLD tag and silently leave the node on the wrong version.
+# serviceInstanceDeployV2 (commitSha optional) creates a fresh deployment from the
+# current config, which is what actually rolls the new image tag.
+service_deploy() {
   local svc_id="$1"
   # shellcheck disable=SC2016  # single quotes intentional: this is a GraphQL variable ($id/$env/...), not shell expansion
   gql 'mutation($env: String!, $svc: String!) {
-    serviceInstanceRedeploy(environmentId: $env, serviceId: $svc)
+    serviceInstanceDeployV2(environmentId: $env, serviceId: $svc)
   }' "$(jq -n --arg env "$TESTNET_ENV_ID" --arg svc "$svc_id" '{env: $env, svc: $svc}')"
+}
+
+# Poll a service's latest deployment until it reaches SUCCESS running the EXPECTED
+# image, or fail. This is the guard against "config says X but the running deployment
+# is still Y": we confirm the node actually deployed the target tag before trusting it
+# and before the chain-health check. Returns 0 only when the newest deployment is
+# SUCCESS and its image == $expected_image.
+verify_node_image() {
+  local svc_id="$1" expected_image="$2" waited=0 timeout="${DEPLOY_VERIFY_TIMEOUT:-300}"
+  while [ "$waited" -lt "$timeout" ]; do
+    local resp status image
+    # shellcheck disable=SC2016
+    resp=$(gql 'query($env: String!, $svc: String!) {
+      deployments(first: 1, input: { environmentId: $env, serviceId: $svc }) {
+        edges { node { status meta } }
+      }
+    }' "$(jq -n --arg env "$TESTNET_ENV_ID" --arg svc "$svc_id" '{env: $env, svc: $svc}')") || { sleep 10; waited=$((waited + 10)); continue; }
+    status=$(jq -r '.data.deployments.edges[0].node.status // empty' <<<"$resp" 2>/dev/null)
+    image=$(jq -r '.data.deployments.edges[0].node.meta.image // empty' <<<"$resp" 2>/dev/null)
+    case "$status" in
+      SUCCESS)
+        if [ "$image" = "$expected_image" ]; then return 0; fi
+        log "  deployment SUCCESS but image is '$image', expected '$expected_image'"
+        return 1
+        ;;
+      FAILED|CRASHED|REMOVED)
+        log "  deployment status '$status' (image '$image')"
+        return 1
+        ;;
+    esac
+    sleep 10
+    waited=$((waited + 10))
+  done
+  log "  timed out after ${timeout}s waiting for deployment to reach SUCCESS on $expected_image"
+  return 1
 }
 
 # ---------------------------------------------------------------------------------------
@@ -337,10 +378,17 @@ deploy_node() {
   local svc="$1" image="$2"
   log "-> deploying $svc to $image"
   service_set_image "${SERVICE_ID[$svc]}" "$image" >/dev/null || return 1
-  # The image field is now changed on Railway even if the redeploy trigger below fails —
+  # The image field is now changed on Railway even if the deploy trigger below fails —
   # record that immediately so the caller's rollback covers this node either way.
   ROLLED+=("$svc")
-  service_redeploy "${SERVICE_ID[$svc]}" >/dev/null || return 1
+  service_deploy "${SERVICE_ID[$svc]}" >/dev/null || return 1
+  # Confirm the node actually deployed the target image (not a redeploy of the old
+  # tag) and reached SUCCESS before we trust it / check chain health.
+  if ! verify_node_image "${SERVICE_ID[$svc]}" "$image"; then
+    log "ERROR: $svc did not come up running $image"
+    return 1
+  fi
+  log "   $svc deployment SUCCESS on $image"
   return 0
 }
 
@@ -356,8 +404,8 @@ rollback_node() {
     log "ERROR: rollback image-set failed for $svc"
     return 1
   fi
-  if ! service_redeploy "${SERVICE_ID[$svc]}" >/dev/null; then
-    log "ERROR: rollback redeploy failed for $svc"
+  if ! service_deploy "${SERVICE_ID[$svc]}" >/dev/null; then
+    log "ERROR: rollback deploy failed for $svc"
     return 1
   fi
   return 0
