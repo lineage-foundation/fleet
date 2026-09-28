@@ -4,30 +4,13 @@
 # for justified exceptions).
 name: Trivy
 
+# Runs on EVERY pull request (no path filter) so it can be a required status check for
+# merging to main — a required check that is skipped on some PRs would leave them stuck
+# "waiting". The fs scan is fast, so scanning every PR is a cheap, uniform merge gate.
 on:
   pull_request:
-    paths:
-      - "Dockerfile"
-      - ".dockerignore"
-      - "docker-compose.yml"
-      - ".docker/**"
-      - ".github/workflows/trivy.yml"
-      - ".trivyignore"
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "crates/**/Cargo.toml"
   push:
     branches: [main]
-    paths:
-      - "Dockerfile"
-      - ".dockerignore"
-      - "docker-compose.yml"
-      - ".docker/**"
-      - ".github/workflows/trivy.yml"
-      - ".trivyignore"
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "crates/**/Cargo.toml"
   workflow_dispatch:
 
 concurrency:

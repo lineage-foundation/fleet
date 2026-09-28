@@ -7,12 +7,13 @@ name: Deploy testnet (canary)
 # ops/deploy-testnet.sh for the full flow, the health check (identical consensus hash across
 # storage-0/1/2, not just matching heights), and the structural testnet-only guard.
 #
-# Caveat (same as release-please.yml): under the default GITHUB_TOKEN, a release-please
-# Release does NOT cascade-trigger other workflows (GitHub does not chain events from the
-# default token), so this workflow's `release: published` trigger will not fire automatically
-# off of a release-please release until a RELEASE_PLEASE_TOKEN PAT is wired into
-# release-please.yml. Until then, `workflow_dispatch` below is the reliable path — run it
-# manually with the version tag after a release is published.
+# Ordering: this runs AFTER the image-build workflow ("Build, scan and push node images")
+# COMPLETES for a release, via `workflow_run` — not directly on `release: published`. That
+# guarantees the signed vX.Y.Z images actually exist before the canary tries to cosign-verify
+# and deploy them (triggering on the release directly would race the ~10-min image build and
+# abort on a missing/unsigned image). The job below only proceeds when that upstream run was
+# for a release AND succeeded; ordinary main-push image builds do not deploy. `workflow_dispatch`
+# remains for manual/dry-run deploys of a specific version.
 #
 # Required secret: RAILWAY_API_TOKEN — a Railway API token scoped to the fleet project, added
 # as a fleet repo (or "testnet" environment) Actions secret. Nothing else is required; every
@@ -20,8 +21,9 @@ name: Deploy testnet (canary)
 # ops/deploy-testnet.sh) rather than stored here.
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["Build, scan and push node images"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       version:
@@ -48,8 +50,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: testnet
+    # Proceed only for a manual dispatch, or when the upstream image build ran for a
+    # RELEASE and succeeded. This filters out the image builds that run on ordinary
+    # pushes to main (workflow_run fires for those too) so only releases deploy.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'release' && github.event.workflow_run.conclusion == 'success')
     env:
-      VERSION: ${{ github.event.release.tag_name || inputs.version }}
+      # For a release-triggered image build, workflow_run.head_branch is the release tag
+      # (e.g. v0.1.1); the deploy script normalizes the leading v to the bare GHCR tag.
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.event.workflow_run.head_branch }}
       DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '0' }}
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
     steps:
