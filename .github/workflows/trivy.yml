@@ -7,10 +7,11 @@ name: Trivy
 # Runs on EVERY pull request (no path filter) so it can be a required status check for
 # merging to main — a required check that is skipped on some PRs would leave them stuck
 # "waiting". The fs scan is fast, so scanning every PR is a cheap, uniform merge gate.
+# PR-only: this scan is a required status check for merging to main, so every
+# change is scanned before it lands. Re-running on push to main would just rescan
+# identical, already-gated content. workflow_dispatch allows an on-demand run.
 on:
   pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
