@@ -20,6 +20,9 @@ name: release-please
 on:
   push:
     branches: [main]
+  # Allow manual runs (e.g. to refresh the release PR after history/config changes)
+  # since this workflow is otherwise only triggered by pushes to main.
+  workflow_dispatch:
 
 concurrency:
   group: release-please-${{ github.workflow }}
