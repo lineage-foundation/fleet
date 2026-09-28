@@ -175,12 +175,25 @@ gql() {
 
 resolve_project_id() {
   local resp pid
-  resp=$(gql 'query { me { workspaces { projects { edges { node { id name } } } } } }') || return 1
+  # Token-type robust: a *workspace* token (the CI/least-privilege choice) lists
+  # projects at the top level, and its `me` query returns "Not Authorized" (a
+  # workspace token is not a user). An *account/personal* token lists projects
+  # under `me.workspaces` and returns nothing at the top level. Try the workspace
+  # path first, then fall back to the personal path, so either token type works.
+  resp=$(gql 'query { projects { edges { node { id name } } } }') || resp=""
   pid=$(jq -r --arg name "$PROJECT_NAME" '
-    [.data.me.workspaces[]?.projects.edges[]?.node | select(.name == $name)] | .[0].id // empty
-  ' <<<"$resp")
+    [.data.projects.edges[]?.node | select(.name == $name)] | .[0].id // empty
+  ' <<<"$resp" 2>/dev/null)
+
   if [[ -z "$pid" ]]; then
-    log "ERROR: no Railway project named '$PROJECT_NAME' visible to this token"
+    resp=$(gql 'query { me { workspaces { projects { edges { node { id name } } } } } }') || resp=""
+    pid=$(jq -r --arg name "$PROJECT_NAME" '
+      [.data.me.workspaces[]?.projects.edges[]?.node | select(.name == $name)] | .[0].id // empty
+    ' <<<"$resp" 2>/dev/null)
+  fi
+
+  if [[ -z "$pid" ]]; then
+    log "ERROR: no Railway project named '$PROJECT_NAME' visible to this token (tried workspace + account queries)"
     return 1
   fi
   printf '%s' "$pid"
