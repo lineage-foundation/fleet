@@ -142,7 +142,11 @@ normalize_version() {
 # ---------------------------------------------------------------------------------------
 gql() {
   # $1 = query string, $2 = variables json (optional, default {})
-  local query="$1" vars="${2:-{}}" body resp
+  # NB: do NOT write `vars="${2:-{}}"` — bash parses that as `${2:-{}` + a literal
+  # `}`, so when $2 is set the value gets a spurious trailing `}` (invalid JSON that
+  # jq --argjson rejects); when $2 is unset it happens to yield `{}`, masking the bug.
+  local query="$1" vars="{}" body resp
+  [[ $# -ge 2 && -n "$2" ]] && vars="$2"
   body=$(jq -n --arg q "$query" --argjson v "$vars" '{query: $q, variables: $v}')
   if ! resp=$(curl -sS --max-time "$CURL_MAX_TIME" \
       -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
