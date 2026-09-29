@@ -2,6 +2,7 @@
 
 pub mod mempool_raft;
 
+use fleet_core::backup_upload::BackupUploader;
 use fleet_core::block_pipeline::{MiningPipelineItem, MiningPipelineStatus, Participants};
 use fleet_core::comms_handler::{Event, Node, TcpTlsConfig};
 use fleet_core::configurations::{MempoolNodeConfig, MempoolNodeSharedConfig, TlsPrivateInfo};
@@ -114,6 +115,8 @@ pub struct MempoolNode {
         Node,
     ),
     init_issuances: Vec<InitialIssuance>,
+    /// Best-effort off-box upload of the on-disk backup directory.
+    backup_uploader: BackupUploader,
 }
 
 /// Outcome of a single progress-watchdog evaluation during `AllItemsIntake`.
@@ -239,6 +242,11 @@ impl MempoolNode {
             ));
         }
 
+        let backup_uploader = BackupUploader::from_env(
+            format!("mempool-{}", config.mempool_node_idx),
+            config.backup_upload_modulo,
+        );
+
         MempoolNode {
             node,
             node_raft,
@@ -273,6 +281,7 @@ impl MempoolNode {
             init_issuances,
             tx_status_list: Default::default(),
             tx_status_lifetime: config.tx_status_lifetime,
+            backup_uploader,
         }
         .load_local_db()
     }
@@ -472,6 +481,16 @@ impl MempoolNode {
         if self.node_raft.need_backup() {
             if let Err(e) = self.db.file_backup() {
                 error!("Error bakup up main db: {:?}", e);
+            }
+        }
+
+        // Best-effort, non-blocking upload of the on-disk backup to S3/R2. Runs on
+        // its own cadence and never affects consensus.
+        if let Some(b_num) = self.node_raft.get_committed_current_block_num() {
+            if self.backup_uploader.need_upload(b_num) {
+                if let Some(dir) = self.db.file_backup_path() {
+                    self.backup_uploader.spawn_upload(dir.into());
+                }
             }
         }
     }

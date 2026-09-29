@@ -1,4 +1,5 @@
 use fleet_core::active_raft::ActiveRaft;
+use fleet_core::backup_upload::BackupUploader;
 use fleet_core::configurations::StorageNodeConfig;
 use fleet_core::constants::DB_PATH;
 use fleet_core::db_utils::{self, SimpleDb, SimpleDbError, SimpleDbSpec};
@@ -12,6 +13,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::future::Future;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{debug, trace, warn};
 use prime::crypto::sha3_256;
@@ -98,6 +100,10 @@ pub struct StorageRaft {
     shutdown_no_commit_process: bool,
     /// Check for backup needed
     backup_check: BackupCheck,
+    /// Best-effort off-box upload of the on-disk RAFT backup directory.
+    backup_uploader: BackupUploader,
+    /// Local RAFT backup directory to upload (None for in-memory DB).
+    backup_dir: Option<PathBuf>,
 }
 
 impl fmt::Debug for StorageRaft {
@@ -142,6 +148,13 @@ impl StorageRaft {
         let consensused = StorageConsensused::default().with_peers_len(peers_len);
         let backup_check = BackupCheck::new(config.backup_block_modulo);
 
+        let backup_dir = db_utils::new_db_save_path(config.storage_db_mode, &DB_SPEC, None)
+            .map(|path| PathBuf::from(path + "_backup"));
+        let backup_uploader = BackupUploader::from_env(
+            format!("storage-{}", config.storage_node_idx),
+            config.backup_upload_modulo,
+        );
+
         Self {
             first_raft_peer,
             raft_active,
@@ -150,6 +163,8 @@ impl StorageRaft {
             proposed_in_flight: Default::default(),
             shutdown_no_commit_process: false,
             backup_check,
+            backup_uploader,
+            backup_dir,
         }
     }
 
@@ -341,6 +356,7 @@ impl StorageRaft {
         self.set_ignore_dedeup_b_num_less_than_current();
 
         let shutdown = block_stored.shutdown;
+        let b_num = block_stored.block_num;
         self.consensused.last_block_stored = Some(block_stored);
 
         let consensused_ser = serialize(&self.consensused).unwrap();
@@ -350,6 +366,14 @@ impl StorageRaft {
         let backup = self.need_backup();
         self.raft_active
             .create_snapshot(snapshot_idx, consensused_ser, backup);
+
+        // Best-effort, non-blocking upload of the on-disk backup to S3/R2. Runs on
+        // its own cadence and never affects consensus.
+        if self.backup_uploader.need_upload(b_num) {
+            if let Some(dir) = &self.backup_dir {
+                self.backup_uploader.spawn_upload(dir.clone());
+            }
+        }
 
         if shutdown {
             self.shutdown_no_commit_process = true;

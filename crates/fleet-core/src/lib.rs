@@ -5,6 +5,7 @@
 
 pub mod active_raft;
 pub mod asert;
+pub mod backup_upload;
 pub mod block_pipeline;
 pub mod bounded_hash_set;
 pub mod comms_handler;

@@ -208,6 +208,8 @@ pub struct MempoolNodeConfig {
     pub routes_pow: BTreeMap<String, usize>,
     /// Backup block that given modulo result in 0
     pub backup_block_modulo: Option<u64>,
+    /// Upload on-disk backups to S3/R2 when block number modulo this is 0. None disables uploads.
+    pub backup_upload_modulo: Option<u64>,
     /// Check UTXO set block modulo
     pub utxo_re_align_block_modulo: Option<u64>,
     /// Restore backup if true
@@ -273,6 +275,8 @@ pub struct StorageNodeConfig {
     pub routes_pow: BTreeMap<String, usize>,
     /// Backup block that given modulo result in 0
     pub backup_block_modulo: Option<u64>,
+    /// Upload on-disk backups to S3/R2 when block number modulo this is 0. None disables uploads.
+    pub backup_upload_modulo: Option<u64>,
     /// Restore backup if true
     pub backup_restore: Option<bool>,
     /// Limit for the number of peers this node can have

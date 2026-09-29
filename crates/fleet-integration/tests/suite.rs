@@ -5638,6 +5638,7 @@ async fn new_asert_test_mempool_raft(activation_height: u64) -> MempoolRaft {
         mempool_api_port: 3003,
         routes_pow: Default::default(),
         backup_block_modulo: Default::default(),
+        backup_upload_modulo: Default::default(),
         utxo_re_align_block_modulo: Default::default(),
         backup_restore: Default::default(),
         mempool_miner_whitelist: Default::default(),
